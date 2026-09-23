@@ -10,6 +10,7 @@ and part_*/ game logs, possibly nested one level per shard). Writes to
   results.csv  one row per endgame: seed and player one's final spread in
                each variation
   changed/     logs of the games where the antistatic endgame changed the result
+  changed.html a viewer for those games (open it in a browser)
 """
 
 import csv
@@ -19,6 +20,9 @@ import os
 import re
 import shutil
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import antistatic_viewer  # noqa: E402
 
 ROW = re.compile(
     r"^\d+\s+(\d+)\s+([+-]?\d+)\s+([+-]?\d+)\s+([+-]?\d+)\s+(\d+)\s*$")
@@ -119,6 +123,22 @@ def main():
     for _, seed, _ in changed:
         if seed in logs:
             shutil.copy(logs[seed], os.path.join(report_dir, "changed"))
+    changed_logs = sorted({logs[s] for _, s, _ in changed if s in logs})
+    if changed_logs:
+        mode = "spread" if any("max spread" in x for x in settings) else \
+            "firstwin"
+        html = antistatic_viewer.build_page(
+            {mode: changed_logs}, "Antistatic Result Changes",
+            f"MAGPIE · {'; '.join(sorted(settings))}",
+            intro=("The endgames where the antistatic solver changed the "
+                   "result compared with static play, out of "
+                   f"{len(rows)} endgames. Both players made static moves "
+                   "until the bag was empty; each endgame was then played "
+                   "static vs static and with the antistatic solver on each "
+                   "side."),
+            subset=True)
+        with open(os.path.join(report_dir, "changed.html"), "w") as f:
+            f.write(html)
 
     n = len(seeds)
     out = ["# Antistatic endgame experiment", ""]

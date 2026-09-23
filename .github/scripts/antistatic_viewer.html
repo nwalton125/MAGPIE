@@ -1,0 +1,469 @@
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root {
+  --ground: #eef0ec;
+  --surface: #fafbf8;
+  --ink: #1b2320;
+  --muted: #5e6b66;
+  --rule: #d3dad4;
+  --sq: #dce3dc;
+  --sq-line: #c3ccc4;
+  --tw: #b84a36;
+  --dw: #e5ad9f;
+  --tl: #2f6e9e;
+  --dl: #a8c8de;
+  --prem-ink: #ffffff;
+  --prem-ink-soft: #3b2a26;
+  --tile: #e8cd90;
+  --tile-edge: #c9a95f;
+  --tile-ink: #2a2114;
+  --blank-ink: #9a3a1c;
+  --accent: #13705f;
+  --accent-soft: #d5ebe5;
+  --focus: #e39b1c;
+  --win: #13705f;
+  --loss: #a33a2a;
+  --draw: #7a6a2a;
+  --sel: #e7ecdf;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #121614;
+    --surface: #1a201d;
+    --ink: #e3e8e4;
+    --muted: #93a09a;
+    --rule: #2c3632;
+    --sq: #252e2a;
+    --sq-line: #323d38;
+    --tw: #9b3e2e;
+    --dw: #734840;
+    --tl: #285a80;
+    --dl: #37566b;
+    --prem-ink: #f3e9e6;
+    --prem-ink-soft: #f0dcd6;
+    --tile: #dcc184;
+    --tile-edge: #b39650;
+    --tile-ink: #231b10;
+    --blank-ink: #9a3a1c;
+    --accent: #4fc1a9;
+    --accent-soft: #1d3a33;
+    --focus: #f0b54a;
+    --win: #4fc1a9;
+    --loss: #e07a68;
+    --draw: #d4bf6a;
+    --sel: #232c28;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #121614;
+  --surface: #1a201d;
+  --ink: #e3e8e4;
+  --muted: #93a09a;
+  --rule: #2c3632;
+  --sq: #252e2a;
+  --sq-line: #323d38;
+  --tw: #9b3e2e;
+  --dw: #734840;
+  --tl: #285a80;
+  --dl: #37566b;
+  --prem-ink: #f3e9e6;
+  --prem-ink-soft: #f0dcd6;
+  --tile: #dcc184;
+  --tile-edge: #b39650;
+  --tile-ink: #231b10;
+  --blank-ink: #9a3a1c;
+  --accent: #4fc1a9;
+  --accent-soft: #1d3a33;
+  --focus: #f0b54a;
+  --win: #4fc1a9;
+  --loss: #e07a68;
+  --draw: #d4bf6a;
+  --sel: #232c28;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: 15px/1.5 "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: 0 20px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 56px; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif; margin: 0; text-wrap: balance; }
+h1 { font-size: 40px; line-height: 1.05; font-weight: 700; letter-spacing: 0.01em; }
+h2 { font-size: 24px; font-weight: 600; }
+h3 { font-size: 17px; font-weight: 600; letter-spacing: 0.02em; }
+.mono { font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace; }
+.muted { color: var(--muted); }
+.eyebrow { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; text-transform: uppercase; letter-spacing: 0.12em; font-size: 13px; color: var(--muted); font-weight: 600; }
+header { display: grid; gap: 10px; }
+header p { margin: 0; max-width: 68ch; }
+.controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg button { font: 600 14px "Barlow", system-ui, sans-serif; border: 0; background: transparent; color: var(--muted); padding: 7px 14px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--surface); }
+button:focus-visible, tr:focus-visible, .mv:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 22px; font-variant-numeric: tabular-nums; }
+.stats b { font-family: "Barlow Condensed", sans-serif; font-size: 20px; font-weight: 600; margin-right: 4px; }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; min-width: 640px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font: 600 13px "Barlow Condensed", sans-serif; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+tbody tr { cursor: pointer; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--sel); }
+tbody tr[aria-selected="true"] { background: var(--accent-soft); }
+.res { font-family: "JetBrains Mono", monospace; font-size: 13.5px; }
+.chip { display: inline-block; font: 600 12px "Barlow", sans-serif; padding: 1px 7px; border-radius: 999px; margin-left: 6px; vertical-align: 1px; }
+.chip.gain { background: var(--accent-soft); color: var(--accent); }
+.chip.lose { background: transparent; color: var(--loss); border: 1px solid var(--loss); }
+.chip.neutral { background: transparent; color: var(--muted); border: 1px solid var(--rule); }
+.chip.flip { background: var(--accent); color: var(--surface); }
+.w { color: var(--win); } .l { color: var(--loss); } .d { color: var(--draw); }
+.game { display: grid; grid-template-columns: minmax(280px, 470px) 1fr; gap: 28px; align-items: start; }
+@media (max-width: 860px) { .game { grid-template-columns: 1fr; } }
+.board-col { display: grid; gap: 12px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); }
+@media (max-width: 860px) { .board-col { position: static; } }
+.board-cap { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.board-wrap { container-type: inline-size; }
+.board { display: grid; grid-template-columns: 1.1fr repeat(15, 1fr); gap: 1px; background: var(--sq-line); border: 1px solid var(--sq-line); border-radius: 6px; overflow: hidden; }
+.board > div { aspect-ratio: 1; display: grid; place-items: center; position: relative; font-size: 3.1cqw; line-height: 1; }
+.lab { background: var(--surface); color: var(--muted); font: 500 2.4cqw "JetBrains Mono", monospace; }
+.sq { background: var(--sq); }
+.sq.tw { background: var(--tw); color: var(--prem-ink); }
+.sq.dw { background: var(--dw); color: var(--prem-ink-soft); }
+.sq.tl { background: var(--tl); color: var(--prem-ink); }
+.sq.dl { background: var(--dl); color: var(--prem-ink-soft); }
+.sq .pl { font: 600 1.9cqw "Barlow Condensed", sans-serif; opacity: 0.9; letter-spacing: 0.02em; }
+.tile { position: absolute; inset: 1px; background: var(--tile); color: var(--tile-ink); border-radius: 3px; box-shadow: inset 0 -2px 0 var(--tile-edge); display: grid; place-items: center; font: 700 3.6cqw "Barlow Condensed", sans-serif; }
+.tile sub { position: absolute; right: 8%; bottom: 6%; font: 600 1.7cqw "Barlow", sans-serif; }
+.tile.blank { color: var(--blank-ink); font-style: italic; }
+.tile.new { box-shadow: inset 0 -2px 0 var(--tile-edge), 0 0 0 2px var(--focus); z-index: 1; }
+.racks { display: grid; gap: 6px; }
+.rack { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rack .who { font: 600 14px "Barlow Condensed", sans-serif; width: 70px; }
+.rtiles { display: flex; gap: 3px; flex-wrap: wrap; }
+.rt { width: 26px; height: 26px; background: var(--tile); color: var(--tile-ink); border-radius: 3px; box-shadow: inset 0 -2px 0 var(--tile-edge); display: grid; place-items: center; font: 700 16px "Barlow Condensed", sans-serif; }
+.rack .sc { font: 600 18px "Barlow Condensed", sans-serif; font-variant-numeric: tabular-nums; margin-left: auto; }
+.cgp { font: 12px/1.45 "JetBrains Mono", monospace; color: var(--muted); word-break: break-all; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; }
+.vars { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.var { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 12px; display: grid; gap: 8px; align-content: start; }
+.var.anti { border-color: var(--accent); }
+.var-head { display: grid; gap: 2px; }
+.var-final { font: 600 22px "Barlow Condensed", sans-serif; font-variant-numeric: tabular-nums; }
+.mv { display: grid; grid-template-columns: 24px 1fr auto; gap: 2px 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; background: transparent; color: inherit; text-align: left; font: inherit; width: 100%; }
+.mv:hover { background: var(--sel); }
+.mv[aria-current="true"] { border-color: var(--focus); background: var(--sel); }
+.mv .p { font: 600 13px "Barlow Condensed", sans-serif; color: var(--muted); padding-top: 2px; }
+.mv .t { font: 600 14px "JetBrains Mono", monospace; }
+.mv .s { font: 13px "JetBrains Mono", monospace; text-align: right; font-variant-numeric: tabular-nums; }
+.mv .sub { grid-column: 2 / 4; font-size: 12.5px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+.mv.anti-move .p { color: var(--accent); }
+.solver { color: var(--accent); font-weight: 600; }
+.solver.to { color: var(--loss); }
+details { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px; }
+summary { cursor: pointer; font: 600 17px "Barlow Condensed", sans-serif; }
+.pre-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 2px 14px; margin-top: 10px; }
+.btn { font: 600 13px "Barlow", sans-serif; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.note { font-size: 13.5px; color: var(--muted); max-width: 70ch; }
+@media (prefers-reduced-motion: no-preference) { .mv, tbody tr { transition: background-color 0.12s; } }
+</style>
+<div class="wrap">
+  <header>
+    <div class="eyebrow" id="eyebrow"></div>
+    <h1 id="page-title"></h1>
+    <p id="intro">Both players make MAGPIE's top static equity move until the bag is empty. The endgame is then played three ways from the same position: <strong>static vs static</strong>, the <strong>antistatic solver as P1</strong>, and the <strong>antistatic solver as P2</strong>. The antistatic player solves the endgame assuming its opponent plays static moves, which it does. Everything before the endgame is identical, so any difference comes from the endgame.</p>
+  </header>
+
+  <div class="controls">
+    <div class="seg" id="modes" role="group" aria-label="Solver mode">
+      <button type="button" id="mode-firstwin" data-mode="firstwin">Win-only</button>
+      <button type="button" id="mode-spread" data-mode="spread">Max spread</button>
+    </div>
+    <div class="stats" id="stats"></div>
+  </div>
+  <p class="note" id="mode-note"></p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Seed</th><th>Endgame start</th><th>Static vs static</th><th>Antistatic P1</th><th>Antistatic P2</th><th>Solver time</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <section class="game" id="game" aria-live="polite">
+    <div class="board-col">
+      <div class="board-cap">
+        <h2 id="board-title"></h2>
+        <button type="button" class="btn" id="to-start">Endgame start</button>
+      </div>
+      <div class="board-wrap"><div class="board" id="board" role="img" aria-label="Board"></div></div>
+      <div class="racks" id="racks"></div>
+      <div class="cgp" id="cgp"></div>
+    </div>
+    <div style="display:grid; gap:18px">
+      <div>
+        <h2 id="game-title"></h2>
+        <p class="note">Spreads are P1's score minus P2's. Click a move to see the board after it; its new tiles are outlined.</p>
+      </div>
+      <div class="vars" id="vars"></div>
+      <details id="pre">
+        <summary id="pre-summary">Moves before the endgame</summary>
+        <div class="pre-list" id="pre-list"></div>
+      </details>
+    </div>
+  </section>
+</div>
+<script>
+const META = __META__;
+const GAMES = __GAMES__;
+const VALUES = {A:1,B:3,C:3,D:2,E:1,F:4,G:2,H:4,I:1,J:8,K:5,L:1,M:3,N:1,O:1,P:3,Q:10,R:1,S:1,T:1,U:1,V:4,W:4,X:8,Y:4,Z:10};
+const PREMIUM = (() => {
+  const m = {};
+  const put = (t, cells) => cells.forEach(([r, c]) => { m[r * 15 + c] = t; });
+  put("tw", [[0,0],[0,7],[0,14],[7,0],[7,14],[14,0],[14,7],[14,14]]);
+  put("dw", [[1,1],[2,2],[3,3],[4,4],[1,13],[2,12],[3,11],[4,10],[13,1],[12,2],[11,3],[10,4],[13,13],[12,12],[11,11],[10,10],[7,7]]);
+  put("tl", [[1,5],[1,9],[5,1],[5,5],[5,9],[5,13],[9,1],[9,5],[9,9],[9,13],[13,5],[13,9]]);
+  put("dl", [[0,3],[0,11],[2,6],[2,8],[3,0],[3,7],[3,14],[6,2],[6,6],[6,8],[6,12],[7,3],[7,11],[8,2],[8,6],[8,8],[8,12],[11,0],[11,7],[11,14],[12,6],[12,8],[14,3],[14,11]]);
+  return m;
+})();
+const PREM_LABEL = {tw: "3W", dw: "2W", tl: "3L", dl: "2L"};
+const VAR_LABEL = ["Static vs static", "Antistatic P1", "Antistatic P2"];
+const MODE_NOTE = {
+  firstwin: "Win-only: the solver stops at the first line that proves a win (or a draw, if no win exists). Once a game is won it doesn't try to maximize the margin, so its spread can be lower than static's. This is the mode for maximizing win%.",
+  spread: "Max spread: the solver finds the line with the best final spread. Its spread should never be worse than static's; this is the correctness check."
+};
+
+const MODES = Object.keys(GAMES[0].modes);
+const state = { mode: MODES.includes("firstwin") ? "firstwin" : MODES[0], seed: GAMES[0].seed, view: { type: "start" } };
+document.getElementById("eyebrow").textContent = META.eyebrow;
+document.getElementById("page-title").textContent = META.title;
+if (META.intro) document.getElementById("intro").textContent = META.intro;
+document.querySelectorAll("#modes button").forEach(b => { b.hidden = !MODES.includes(b.dataset.mode); });
+if (MODES.length < 2) document.getElementById("modes").hidden = true;
+
+function placeMove(board, mv, fresh) {
+  let m = /^(\d+)([A-O])$/.exec(mv.coord), r, c, dr, dc;
+  if (m) { r = +m[1] - 1; c = m[2].charCodeAt(0) - 65; dr = 0; dc = 1; }
+  else { m = /^([A-O])(\d+)$/.exec(mv.coord); r = +m[2] - 1; c = m[1].charCodeAt(0) - 65; dr = 1; dc = 0; }
+  let through = false;
+  for (const ch of mv.word) {
+    if (ch === "(") { through = true; continue; }
+    if (ch === ")") { through = false; continue; }
+    if (!through) { board[r * 15 + c] = ch; if (fresh) fresh.add(r * 15 + c); }
+    r += dr; c += dc;
+  }
+}
+function applyMoves(board, moves, upto, fresh) {
+  moves.slice(0, upto).forEach((mv, i) => {
+    if (mv.kind === "play") placeMove(board, mv, i === upto - 1 ? fresh : null);
+  });
+}
+const game = () => GAMES.find(g => g.seed === state.seed);
+const signCls = s => s > 0 ? "w" : s < 0 ? "l" : "d";
+const fmt = s => (s > 0 ? "+" : "") + s;
+const resultWord = s => s > 0 ? "win" : s < 0 ? "loss" : "draw";
+
+// Which player is on turn when the endgame starts, and their racks/scores.
+function endgameStart(g) {
+  const parts = g.cgp.split(" ");
+  const onTurn = g.modes[MODES[0]][0].moves[0].player;
+  const [rackA, rackB] = parts[1].split("/");
+  const [scoreA, scoreB] = parts[2].split("/").map(Number);
+  const racks = {}, scores = {};
+  racks[onTurn] = rackA; racks[3 - onTurn] = rackB;
+  scores[onTurn] = scoreA; scores[3 - onTurn] = scoreB;
+  return { onTurn, racks, scores };
+}
+// Gain for the antistatic player in variation v (1 = P1, 2 = P2).
+function gain(g, v) {
+  const vars = g.modes[state.mode];
+  const sign = v === 1 ? 1 : -1;
+  return sign * (vars[v].spread - vars[0].spread);
+}
+function flip(g, v) {
+  const vars = g.modes[state.mode];
+  const sign = v === 1 ? 1 : -1;
+  return Math.sign(sign * vars[v].spread) - Math.sign(sign * vars[0].spread);
+}
+function solverTime(g) {
+  let t = 0, n = 0;
+  g.modes[state.mode].forEach(v => v.moves.forEach(m => { if (m.solver !== undefined) { t += m.solver; n++; } }));
+  return { t, n };
+}
+
+function renderStats() {
+  let flips = 0, g1 = 0, g2 = 0, t = 0, n = 0;
+  GAMES.forEach(g => { flips += Math.abs(flip(g, 1)) + Math.abs(flip(g, 2)); g1 += gain(g, 1); g2 += gain(g, 2); const s = solverTime(g); t += s.t; n += s.n; });
+  const k = GAMES.length;
+  if (META.subset) {
+    document.getElementById("stats").innerHTML =
+      `<span><b>${k}</b>${k === 1 ? "game" : "games"} shown</span>` +
+      `<span><b>${t.toFixed(1)}s</b>solver time, ${n} moves</span>`;
+    document.getElementById("mode-note").textContent = MODE_NOTE[state.mode];
+    document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === state.mode)));
+    return;
+  }
+  document.getElementById("stats").innerHTML =
+    `<span><b>${flips}</b>results changed</span>` +
+    `<span><b>${fmt(+(g1 / k).toFixed(1))}</b>mean spread gain as P1</span>` +
+    `<span><b>${fmt(+(g2 / k).toFixed(1))}</b>as P2</span>` +
+    `<span><b>${t.toFixed(1)}s</b>solver time, ${n} moves</span>`;
+  document.getElementById("mode-note").textContent = MODE_NOTE[state.mode];
+  document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === state.mode)));
+}
+
+function cell(g, v) {
+  const vars = g.modes[state.mode];
+  const s = vars[v].spread;
+  let chip = "";
+  if (v > 0) {
+    const f = flip(g, v), d = gain(g, v);
+    if (f > 0) chip = `<span class="chip flip">result improved</span>`;
+    else if (f < 0) chip = `<span class="chip lose">result worse</span>`;
+    else if (d !== 0 && state.mode === "firstwin") chip = `<span class="chip neutral" title="Spread differs, same result. Win-only mode doesn't maximize spread.">${fmt(d)}</span>`;
+    else if (d > 0) chip = `<span class="chip gain">+${d}</span>`;
+    else if (d < 0) chip = `<span class="chip lose">${d}</span>`;
+  }
+  return `<td><span class="res ${signCls(s)}">${fmt(s)}</span>${chip}</td>`;
+}
+function renderRows() {
+  const rows = GAMES.map((g, i) => {
+    const st = endgameStart(g);
+    const s = solverTime(g);
+    return `<tr tabindex="0" data-seed="${g.seed}" aria-selected="${g.seed === state.seed}">
+      <td><strong>Seed ${g.seed}</strong></td>
+      <td><span class="mono" style="font-size:13px">P1 ${st.scores[1]} – ${st.scores[2]} P2</span> <span class="muted">· P${st.onTurn} to move</span></td>
+      ${cell(g, 0)}${cell(g, 1)}${cell(g, 2)}
+      <td class="mono muted" style="font-size:13px">${s.t.toFixed(2)}s</td></tr>`;
+  });
+  const body = document.getElementById("rows");
+  body.innerHTML = rows.join("");
+  body.querySelectorAll("tr").forEach(tr => {
+    const pick = () => { state.seed = +tr.dataset.seed; state.view = { type: "start" }; render(); };
+    tr.addEventListener("click", pick);
+    tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+  });
+}
+
+function boardFor(g) {
+  const board = new Array(225).fill(null);
+  const fresh = new Set();
+  const v = state.view;
+  if (v.type === "pre") {
+    applyMoves(board, g.pre, v.idx + 1, fresh);
+  } else {
+    applyMoves(board, g.pre, g.pre.length, null);
+    if (v.type === "var") applyMoves(board, g.modes[state.mode][v.v].moves, v.idx + 1, fresh);
+  }
+  return { board, fresh };
+}
+function renderBoard(g) {
+  const { board, fresh } = boardFor(g);
+  const out = [`<div class="lab"></div>`];
+  for (let c = 0; c < 15; c++) out.push(`<div class="lab">${String.fromCharCode(65 + c)}</div>`);
+  for (let r = 0; r < 15; r++) {
+    out.push(`<div class="lab">${r + 1}</div>`);
+    for (let c = 0; c < 15; c++) {
+      const i = r * 15 + c, p = PREMIUM[i], t = board[i];
+      let inner = p && !t ? `<span class="pl">${PREM_LABEL[p]}</span>` : "";
+      if (t) {
+        const blank = t === t.toLowerCase();
+        const up = t.toUpperCase();
+        inner = `<div class="tile${blank ? " blank" : ""}${fresh.has(i) ? " new" : ""}">${up}${blank ? "" : `<sub>${VALUES[up]}</sub>`}</div>`;
+      }
+      out.push(`<div class="sq${p ? " " + p : ""}">${inner}</div>`);
+    }
+  }
+  document.getElementById("board").innerHTML = out.join("");
+  const v = state.view;
+  let title = "Endgame start";
+  if (v.type === "pre") title = `Before the endgame · move ${v.idx + 1}`;
+  if (v.type === "var") title = `${VAR_LABEL[v.v]} · move ${v.idx + 1}`;
+  document.getElementById("board-title").textContent = title;
+  document.getElementById("board").setAttribute("aria-label", title);
+}
+function rackTiles(rack) {
+  return `<div class="rtiles">${[...rack].map(ch => `<div class="rt">${ch === "?" ? "?" : ch}</div>`).join("")}</div>`;
+}
+function renderRacks(g) {
+  const st = endgameStart(g);
+  document.getElementById("racks").innerHTML = [1, 2].map(p =>
+    `<div class="rack"><span class="who">P${p}${st.onTurn === p ? " · to move" : ""}</span>${rackTiles(st.racks[p])}<span class="sc">${st.scores[p]}</span></div>`
+  ).join("");
+  document.getElementById("cgp").textContent = g.cgp;
+}
+function moveRow(mv, key, isAnti, current) {
+  const sub = [`<span class="mono">${mv.rack}</span>`, `<span class="mono">${mv.s1}–${mv.s2}</span>`];
+  if (mv.solver !== undefined) sub.push(`<span class="solver${mv.timedOut ? " to" : ""}">solver ${mv.solver.toFixed(2)}s${mv.timedOut ? ", timed out" : ""}</span>`);
+  return `<button type="button" class="mv${isAnti ? " anti-move" : ""}" data-key="${key}" aria-current="${current}">
+    <span class="p">P${mv.player}</span><span class="t">${mv.text}</span><span class="s">${mv.kind === "play" ? mv.score : ""}</span>
+    <span class="sub">${sub.join("")}</span></button>`;
+}
+function renderVars(g) {
+  const vars = g.modes[state.mode];
+  const v = state.view;
+  document.getElementById("vars").innerHTML = vars.map((variation, vi) => {
+    const s = variation.spread;
+    let delta = "";
+    if (vi > 0) {
+      const d = gain(g, vi);
+      if (d === 0) delta = `<span class="muted">same spread as static</span>`;
+      else if (state.mode === "firstwin" && flip(g, vi) === 0) delta = `<span class="muted">${fmt(d)} spread for antistatic P${vi}, same result (win-only doesn't maximize spread)</span>`;
+      else delta = `<span class="${d > 0 ? "w" : "l"}">${fmt(d)} for antistatic P${vi}</span>`;
+    }
+    const rows = variation.moves.map((mv, mi) => {
+      const isAnti = mv.solver !== undefined;
+      const cur = v.type === "var" && v.v === vi && v.idx === mi;
+      return moveRow(mv, `var:${vi}:${mi}`, isAnti, cur);
+    }).join("");
+    return `<div class="var${vi > 0 ? " anti" : ""}">
+      <div class="var-head"><h3>${VAR_LABEL[vi]}</h3>
+        <div class="var-final"><span class="${signCls(s)}">P1 ${fmt(s)}</span> <span class="muted" style="font-size:15px">${variation.final[0]}–${variation.final[1]} · P1 ${resultWord(s)}</span></div>
+        <div style="font-size:13.5px">${delta}</div></div>
+      ${rows}</div>`;
+  }).join("");
+}
+function renderPre(g) {
+  const v = state.view;
+  document.getElementById("pre-summary").textContent = `Moves before the endgame (${g.pre.length})`;
+  document.getElementById("pre-list").innerHTML = g.pre.map((mv, i) =>
+    moveRow(mv, `pre:${i}`, false, v.type === "pre" && v.idx === i)).join("");
+}
+function render() {
+  renderStats();
+  renderRows();
+  const g = game();
+  const st = endgameStart(g);
+  document.getElementById("game-title").textContent = `Seed ${g.seed} · P1 ${st.scores[1]}–${st.scores[2]} P2 at the endgame`;
+  renderBoard(g);
+  renderRacks(g);
+  renderVars(g);
+  renderPre(g);
+  rebind();
+}
+function rebind() {
+  document.querySelectorAll(".mv").forEach(b => {
+    if (b.dataset.bound) return;
+    b.dataset.bound = "1";
+    b.addEventListener("click", () => {
+      const [type, a, b2] = b.dataset.key.split(":");
+      state.view = type === "pre" ? { type: "pre", idx: +a } : { type: "var", v: +a, idx: +b2 };
+      const g = game();
+      renderBoard(g); renderVars(g); renderPre(g); rebind();
+    });
+  });
+}
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+  state.mode = b.dataset.mode;
+  if (state.view.type === "var") state.view = { type: "start" };
+  render();
+}));
+document.getElementById("to-start").addEventListener("click", () => { state.view = { type: "start" }; const g = game(); renderBoard(g); renderVars(g); renderPre(g); rebind(); });
+render();
+</script>
