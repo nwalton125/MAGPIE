@@ -3,6 +3,7 @@
 #include "../src/util/io_util.h"
 #include "alias_method_test.h"
 #include "alphabet_test.h"
+#include "antistatic_endgame_test.h"
 #include "analyze_test.h"
 #include "autoplay_test.h"
 #include "bag_test.h"
@@ -144,6 +145,7 @@ static TestEntry test_table[] = {
     {"winpct", test_win_pct},
     {"endgame", test_endgame},
     {"estatic", test_static_opponent},
+    {"antistaticeg", test_antistatic_endgame_experiment},
     {"endgameoutplay", test_endgame_outplay_zobrist_overflow},
     {"endgamefirstwin", test_endgame_first_win_sign},
     {"eldar_v", test_eldar_v_stick},

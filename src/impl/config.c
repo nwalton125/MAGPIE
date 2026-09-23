@@ -144,6 +144,7 @@ typedef enum {
   ARG_TOKEN_ENDGAME_TOP_K,
   ARG_TOKEN_ENDGAME_OPPONENT_STATIC,
   ARG_TOKEN_ENDGAME_FIRST_WIN,
+  ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME,
   ARG_TOKEN_ENDGAME_TIME_LIMIT,
   ARG_TOKEN_PEG_TOP_K,
   ARG_TOKEN_PEG_TIME_LIMIT,
@@ -348,6 +349,7 @@ struct Config {
   int endgame_top_k;
   bool endgame_opponent_static;
   bool endgame_first_win;
+  bool play_chooser_static_pre_endgame;
   // PEG scenario-sampling stride (halving stages, bag >= 3). 0 = solver
   // default.
   int peg_num_stages;
@@ -1702,6 +1704,14 @@ void add_help_arg_to_string_builder(const Config *config, int token,
              "Also applies to the endgames of autoplay players that use the "
              "play chooser.";
       break;
+    case ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME:
+      usages[0] = "<true_or_false>";
+      examples[0] = "true";
+      examples[1] = "false";
+      text = "Specifies whether autoplay players that use the play chooser "
+             "play their top static equity move until the bag is empty, "
+             "instead of using the pre-endgame solver or simulation.";
+      break;
     case ARG_TOKEN_ENDGAME_TIME_LIMIT:
       usages[0] = "<time_limit_seconds>";
       text = "Specifies the time limit in seconds for the endgame solver. A "
@@ -2436,6 +2446,7 @@ char *impl_help(Config *config, ErrorStack *error_stack) {
         ARG_TOKEN_OVERTIME_PERIOD,         /* otperiod */
         ARG_TOKEN_P1_PLAY_CHOOSER_TIME,    /* pc1 */
         ARG_TOKEN_P2_PLAY_CHOOSER_TIME,    /* pc2 */
+        ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME, /* pcstaticpre */
         ARG_TOKEN_PEG_NESTED,              /* pegnested */
         ARG_TOKEN_PEG_OUTCOMES,            /* pegoutcomes */
         ARG_TOKEN_PEG_OUT_LINES,           /* pegoutlines */
@@ -3841,7 +3852,9 @@ void config_fill_autoplay_args(const Config *config,
   for (int player_index = 0; player_index < 2; player_index++) {
     autoplay_args->play_chooser_strategies[player_index] =
         (PlayChooserStrategy){
-            .pre_endgame_eval = PLAY_CHOOSER_EVAL_PEG,
+            .pre_endgame_eval = config->play_chooser_static_pre_endgame
+                                    ? PLAY_CHOOSER_EVAL_STATIC
+                                    : PLAY_CHOOSER_EVAL_PEG,
             .endgame_eval = PLAY_CHOOSER_EVAL_ENDGAME,
             .endgame_opponent_static = config->endgame_opponent_static,
             .endgame_first_win = config->endgame_first_win,
@@ -7286,6 +7299,12 @@ void config_load_data(Config *config, ErrorStack *error_stack) {
     return;
   }
 
+  config_load_bool(config, ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME,
+                   &config->play_chooser_static_pre_endgame, error_stack);
+  if (!error_stack_is_empty(error_stack)) {
+    return;
+  }
+
   config_load_double(config, ARG_TOKEN_ENDGAME_TIME_LIMIT, 0, 1e9,
                      &config->endgame_time_limit_seconds, error_stack);
   if (!error_stack_is_empty(error_stack)) {
@@ -9437,6 +9456,7 @@ Config *config_create(const ConfigArgs *config_args, ErrorStack *error_stack) {
   arg(ARG_TOKEN_ENDGAME_TOP_K, "etopk", 1, 1);
   arg(ARG_TOKEN_ENDGAME_OPPONENT_STATIC, "estatic", 1, 1);
   arg(ARG_TOKEN_ENDGAME_FIRST_WIN, "efirstwin", 1, 1);
+  arg(ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME, "pcstaticpre", 1, 1);
   arg(ARG_TOKEN_ENDGAME_TIME_LIMIT, "etlim", 1, 1);
   arg(ARG_TOKEN_PEG_TOP_K, "pegtopk", 1, 1);
   arg(ARG_TOKEN_PEG_TIME_LIMIT, "pegtlim", 1, 1);
@@ -9561,6 +9581,7 @@ Config *config_create(const ConfigArgs *config_args, ErrorStack *error_stack) {
   config->endgame_top_k = 1;
   config->endgame_opponent_static = false;
   config->endgame_first_win = false;
+  config->play_chooser_static_pre_endgame = false;
   // -1 = no peg results yet; 0 stages = built-in schedule; 0 stride = solver
   // default; rational opponent; no only-solve / never-prune restrictions.
   config->peg_result.last_completed_stage = -1;
@@ -9993,6 +10014,10 @@ void config_add_settings_to_string_builder(const Config *config,
     case ARG_TOKEN_ENDGAME_FIRST_WIN:
       config_add_bool_setting_to_string_builder(config, sb, arg_token,
                                                 config->endgame_first_win);
+      break;
+    case ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME:
+      config_add_bool_setting_to_string_builder(
+          config, sb, arg_token, config->play_chooser_static_pre_endgame);
       break;
     case ARG_TOKEN_ENDGAME_TIME_LIMIT:
       config_add_double_setting_to_string_builder(
