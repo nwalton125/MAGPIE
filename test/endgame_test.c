@@ -1708,23 +1708,24 @@ static int32_t solve_static_opponent_endgame(const char *cgp, int plies,
   assert(pv_line->num_moves > 0);
 
   const int solving_player = game_get_player_on_turn_index(game);
-  Game *game_copy = game_duplicate(game);
+  Game *replay_game = game_duplicate(game);
   MoveList *move_list = move_list_create(1);
   Move pv_move;
   for (int i = 0; i < pv_line->num_moves &&
-                  game_get_game_end_reason(game_copy) == GAME_END_REASON_NONE;
+                  game_get_game_end_reason(replay_game) == GAME_END_REASON_NONE;
        i++) {
-    small_move_to_move(&pv_move, &pv_line->moves[i], game_get_board(game_copy));
-    if (game_get_player_on_turn_index(game_copy) != solving_player) {
-      const Move *top_move = get_top_equity_move(game_copy, move_list);
+    small_move_to_move(&pv_move, &pv_line->moves[i],
+                       game_get_board(replay_game));
+    if (game_get_player_on_turn_index(replay_game) != solving_player) {
+      const Move *top_move = get_top_equity_move(replay_game, move_list);
       assert(compare_moves_without_equity(top_move, &pv_move, true) == -1);
     }
-    play_move(&pv_move, game_copy, NULL);
+    play_move(&pv_move, replay_game, NULL);
   }
 
   const int32_t value = pv_line->score;
   move_list_destroy(move_list);
-  game_destroy(game_copy);
+  game_destroy(replay_game);
   error_stack_destroy(error_stack);
   endgame_ctx_destroy(ctx);
   config_destroy(config);
