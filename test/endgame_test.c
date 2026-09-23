@@ -1751,10 +1751,12 @@ void test_static_opponent(void) {
   printf("static opponent: standard=%d very_deep=%d\n", standard_value,
          very_deep_value);
   // Multithreaded solves must agree.
-  assert(solve_static_opponent_endgame(standard_cgp, MAX_SEARCH_DEPTH, 4) ==
-         standard_value);
-  assert(solve_static_opponent_endgame(very_deep_cgp, MAX_SEARCH_DEPTH, 4) ==
-         very_deep_value);
+  const int32_t standard_value_threaded =
+      solve_static_opponent_endgame(standard_cgp, MAX_SEARCH_DEPTH, 4);
+  const int32_t very_deep_value_threaded =
+      solve_static_opponent_endgame(very_deep_cgp, MAX_SEARCH_DEPTH, 4);
+  assert(standard_value_threaded == standard_value);
+  assert(very_deep_value_threaded == very_deep_value);
   // Against a weaker opponent, the solving player can only do better.
   assert(standard_value >= 11);
   assert(very_deep_value >= -116);

@@ -33,7 +33,6 @@
 #include "../src/ent/letter_distribution.h"
 #include "../src/ent/move.h"
 #include "../src/ent/player.h"
-#include "../src/ent/rack.h"
 #include "../src/ent/thread_control.h"
 #include "../src/impl/cgp.h"
 #include "../src/impl/config.h"
@@ -46,6 +45,7 @@
 #include "test_constants.h"
 #include "test_util.h"
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -66,12 +66,12 @@ typedef struct EndgameOutcome {
 
 static int env_int(const char *name, int default_value) {
   const char *value = getenv(name);
-  return value ? atoi(value) : default_value;
+  return value ? (int)strtol(value, NULL, 10) : default_value;
 }
 
 static double env_double(const char *name, double default_value) {
   const char *value = getenv(name);
-  return value ? atof(value) : default_value;
+  return value ? strtod(value, NULL) : default_value;
 }
 
 static const char *env_string(const char *name, const char *default_value) {
@@ -181,8 +181,8 @@ static EndgameOutcome play_out_endgame(const Game *start, int antistatic_player,
       outcome.antistatic_timeouts += timed_out;
       outcome.antistatic_seconds += elapsed;
       char annotation[64];
-      snprintf(annotation, sizeof(annotation), "  [solver %.2fs%s]", elapsed,
-               timed_out ? ", TIMED OUT" : "");
+      (void)snprintf(annotation, sizeof(annotation), "  [solver %.2fs%s]",
+                     elapsed, timed_out ? ", TIMED OUT" : "");
       log_and_play_move(log, &move, game, annotation);
     } else {
       move_copy(&move, get_top_equity_move(game, move_list));
@@ -221,6 +221,7 @@ void test_antistatic_endgame_experiment(void) {
   MoveList *move_list = move_list_create(1);
   EndgameResults *results = endgame_results_create();
   EndgameCtx *ctx = NULL;
+  ErrorStack *error_stack = error_stack_create();
 
   printf("antistatic endgame experiment: %d games from seed %d, %.1fs per "
          "move, %s, lexicon %s\n",
@@ -304,9 +305,8 @@ void test_antistatic_endgame_experiment(void) {
 
     char *path = get_formatted_string("%s/game_%04d_seed_%d.txt", out_dir,
                                       game_index + 1, seed);
-    FILE *file = fopen_or_die(path, "w");
-    fputs(string_builder_peek(log), file);
-    fclose(file);
+    write_string_to_file(path, "w", string_builder_peek(log), error_stack);
+    assert(error_stack_is_empty(error_stack));
     free(path);
     string_builder_destroy(log);
   }
@@ -323,6 +323,7 @@ void test_antistatic_endgame_experiment(void) {
          total_antistatic_moves, total_antistatic_seconds, total_timeouts);
   printf("Game logs: %s/\n", out_dir);
 
+  error_stack_destroy(error_stack);
   endgame_ctx_destroy(ctx);
   endgame_results_destroy(results);
   move_list_destroy(move_list);
