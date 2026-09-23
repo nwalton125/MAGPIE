@@ -98,13 +98,13 @@ static const char *result_string(int spread) {
 
 // Appends "P<n> <rack>  <move>  <score1>-<score2>" for a move about to be
 // played, then plays it.
-static void log_and_play_move(StringBuilder *log, const Move *move,
-                              Game *game, const char *annotation) {
+static void log_and_play_move(StringBuilder *log, const Move *move, Game *game,
+                              const char *annotation) {
   const LetterDistribution *ld = game_get_ld(game);
   const int on_turn = game_get_player_on_turn_index(game);
   string_builder_add_formatted_string(log, "  P%d ", on_turn + 1);
-  string_builder_add_rack(
-      log, player_get_rack(game_get_player(game, on_turn)), ld, false);
+  string_builder_add_rack(log, player_get_rack(game_get_player(game, on_turn)),
+                          ld, false);
   string_builder_add_string(log, "  ");
   string_builder_add_move(log, game_get_board(game), move, ld, true);
   play_move(move, game, NULL);
@@ -174,9 +174,8 @@ static EndgameOutcome play_out_endgame(const Game *start, int antistatic_player,
     if (game_get_player_on_turn_index(game) == antistatic_player) {
       bool timed_out = false;
       double elapsed = 0.0;
-      const bool ok = choose_antistatic_move(game, ctx, results, seconds,
-                                             first_win, &move, &timed_out,
-                                             &elapsed);
+      const bool ok = choose_antistatic_move(
+          game, ctx, results, seconds, first_win, &move, &timed_out, &elapsed);
       assert(ok);
       outcome.antistatic_moves++;
       outcome.antistatic_timeouts += timed_out;
@@ -214,9 +213,8 @@ void test_antistatic_endgame_experiment(void) {
       lexicon);
   Config *config = config_create_or_die(config_cmd);
   free(config_cmd);
-  char *empty_cgp_cmd =
-      get_formatted_string("cgp %s -lex %s;", EMPTY_CGP_WITHOUT_OPTIONS,
-                           lexicon);
+  char *empty_cgp_cmd = get_formatted_string(
+      "cgp %s -lex %s;", EMPTY_CGP_WITHOUT_OPTIONS, lexicon);
   load_and_exec_config_or_die(config, empty_cgp_cmd);
   free(empty_cgp_cmd);
   Game *game = config_get_game(config);
@@ -226,10 +224,10 @@ void test_antistatic_endgame_experiment(void) {
 
   printf("antistatic endgame experiment: %d games from seed %d, %.1fs per "
          "move, %s, lexicon %s\n",
-         num_games, first_seed, seconds,
-         first_win ? "first-win" : "max spread", lexicon);
-  printf("%-6s %-6s %-9s %-9s %-9s %-7s\n", "game", "seed", "static",
-         "anti-P1", "anti-P2", "timeouts");
+         num_games, first_seed, seconds, first_win ? "first-win" : "max spread",
+         lexicon);
+  printf("%-6s %-6s %-9s %-9s %-9s %-7s\n", "game", "seed", "static", "anti-P1",
+         "anti-P2", "timeouts");
 
   // Outcome changes relative to the baseline, from the antistatic player's
   // point of view: [0] = antistatic player one, [1] = antistatic player two.
@@ -275,16 +273,16 @@ void test_antistatic_endgame_experiment(void) {
     free(cgp);
 
     EndgameOutcome outcomes[NUM_VARIANTS];
-    const char *variant_names[NUM_VARIANTS] = {
-        "Static vs static", "Antistatic P1 vs static P2",
-        "Static P1 vs antistatic P2"};
+    const char *variant_names[NUM_VARIANTS] = {"Static vs static",
+                                               "Antistatic P1 vs static P2",
+                                               "Static P1 vs antistatic P2"};
     const int antistatic_players[NUM_VARIANTS] = {ANTISTATIC_NONE, 0, 1};
     for (int variant = 0; variant < NUM_VARIANTS; variant++) {
       string_builder_add_formatted_string(log, "\n%s:\n",
                                           variant_names[variant]);
-      outcomes[variant] = play_out_endgame(
-          game, antistatic_players[variant], seconds, first_win, move_list,
-          &ctx, results, log);
+      outcomes[variant] =
+          play_out_endgame(game, antistatic_players[variant], seconds,
+                           first_win, move_list, &ctx, results, log);
       total_timeouts += outcomes[variant].antistatic_timeouts;
       total_antistatic_moves += outcomes[variant].antistatic_moves;
       total_antistatic_seconds += outcomes[variant].antistatic_seconds;
@@ -304,9 +302,8 @@ void test_antistatic_endgame_experiment(void) {
            outcomes[1].final_spread, outcomes[2].final_spread,
            outcomes[1].antistatic_timeouts + outcomes[2].antistatic_timeouts);
 
-    char *path =
-        get_formatted_string("%s/game_%04d_seed_%d.txt", out_dir,
-                             game_index + 1, seed);
+    char *path = get_formatted_string("%s/game_%04d_seed_%d.txt", out_dir,
+                                      game_index + 1, seed);
     FILE *file = fopen_or_die(path, "w");
     fputs(string_builder_peek(log), file);
     fclose(file);
@@ -320,8 +317,7 @@ void test_antistatic_endgame_experiment(void) {
     printf("Antistatic as P%d: better result in %d, worse in %d, mean spread "
            "gain %+.2f\n",
            player + 1, improved[player], worsened[player],
-           games_played > 0 ? (double)spread_gain[player] / games_played
-                            : 0.0);
+           games_played > 0 ? (double)spread_gain[player] / games_played : 0.0);
   }
   printf("Antistatic solver: %d moves, %.2fs total, %d timed out\n",
          total_antistatic_moves, total_antistatic_seconds, total_timeouts);

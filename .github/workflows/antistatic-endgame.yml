@@ -1,0 +1,119 @@
+name: antistatic endgame experiment
+
+# Plays static vs static until the bag is empty, then plays each endgame out
+# with the static player and with the antistatic endgame solver on each side
+# (magpie_test antistaticeg). Seeds are split across parallel jobs; the
+# "report" job combines them. Start it from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      games:
+        description: Number of games
+        default: "1000"
+      shards:
+        description: Parallel jobs (each also splits across its cores)
+        default: "10"
+      first_seed:
+        description: Seed of the first game
+        default: "1"
+      seconds:
+        description: Endgame solver time limit per move, in seconds
+        default: "10"
+      first_win:
+        description: Win-only search (true) or maximize spread (false)
+        type: boolean
+        default: true
+      lexicon:
+        description: Lexicon
+        default: NWL23
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - id: plan
+        run: |
+          shards=${{ inputs.shards }}
+          echo "shards=$(python3 -c "import json; print(json.dumps(list(range($shards))))")" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache lexicon data
+        id: cache-data
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: data-${{ inputs.lexicon }}-${{ hashFiles('download_data.sh') }}
+
+      - name: Build
+        run: make -j"$(nproc)" magpie magpie_test BUILD=no_pgo_release
+
+      - name: Download and prepare lexicon data
+        if: steps.cache-data.outputs.cache-hit != 'true'
+        run: |
+          ./download_data.sh
+          bin/magpie convert dawg2text "${{ inputs.lexicon }}"
+          bin/magpie convert text2wordmap "${{ inputs.lexicon }}" -threads "$(nproc)"
+          # Keep only this lexicon's files so the cache stays small.
+          find data/lexica -type f ! -name "${{ inputs.lexicon }}.kwg" \
+            ! -name "${{ inputs.lexicon }}.klv2" ! -name "${{ inputs.lexicon }}.wmp" -delete
+
+      - name: Run shard
+        env:
+          ANTISTATIC_SECONDS: ${{ inputs.seconds }}
+          ANTISTATIC_FIRSTWIN: ${{ inputs.first_win && '1' || '0' }}
+          ANTISTATIC_LEX: ${{ inputs.lexicon }}
+        run: |
+          games=${{ inputs.games }}
+          shards=${{ inputs.shards }}
+          shard=${{ matrix.shard }}
+          per_shard=$(( (games + shards - 1) / shards ))
+          first=$(( ${{ inputs.first_seed }} + shard * per_shard ))
+          count=$(( games - shard * per_shard ))
+          (( count > per_shard )) && count=$per_shard
+          if (( count > 0 )); then
+            .github/scripts/antistatic_shard.sh "$first" "$count" "results/shard_$shard"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shard-${{ matrix.shard }}
+          path: results
+          if-no-files-found: ignore
+          retention-days: 30
+
+  report:
+    needs: run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          path: results
+          merge-multiple: true
+
+      - name: Combine shards
+        run: |
+          python3 .github/scripts/antistatic_aggregate.py results report
+          cat report/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: report
+          retention-days: 90

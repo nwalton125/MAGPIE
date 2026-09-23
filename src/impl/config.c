@@ -144,7 +144,7 @@ typedef enum {
   ARG_TOKEN_ENDGAME_TOP_K,
   ARG_TOKEN_ENDGAME_OPPONENT_STATIC,
   ARG_TOKEN_ENDGAME_FIRST_WIN,
-  ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME,
+  ARG_TOKEN_PC_STATIC_PRE,
   ARG_TOKEN_ENDGAME_TIME_LIMIT,
   ARG_TOKEN_PEG_TOP_K,
   ARG_TOKEN_PEG_TIME_LIMIT,
@@ -1698,13 +1698,14 @@ void add_help_arg_to_string_builder(const Config *config, int token,
       usages[0] = "<true_or_false>";
       examples[0] = "true";
       examples[1] = "false";
-      text = "Specifies whether the endgame solver stops at the first line that "
-             "proves a win instead of finding the best spread. The result is "
-             "only a win, draw, or loss; its value is not an exact spread. "
-             "Also applies to the endgames of autoplay players that use the "
-             "play chooser.";
+      text =
+          "Specifies whether the endgame solver stops at the first line that "
+          "proves a win instead of finding the best spread. The result is "
+          "only a win, draw, or loss; its value is not an exact spread. "
+          "Also applies to the endgames of autoplay players that use the "
+          "play chooser.";
       break;
-    case ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME:
+    case ARG_TOKEN_PC_STATIC_PRE:
       usages[0] = "<true_or_false>";
       examples[0] = "true";
       examples[1] = "false";
@@ -2446,7 +2447,7 @@ char *impl_help(Config *config, ErrorStack *error_stack) {
         ARG_TOKEN_OVERTIME_PERIOD,         /* otperiod */
         ARG_TOKEN_P1_PLAY_CHOOSER_TIME,    /* pc1 */
         ARG_TOKEN_P2_PLAY_CHOOSER_TIME,    /* pc2 */
-        ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME, /* pcstaticpre */
+        ARG_TOKEN_PC_STATIC_PRE,           /* pcstaticpre */
         ARG_TOKEN_PEG_NESTED,              /* pegnested */
         ARG_TOKEN_PEG_OUTCOMES,            /* pegoutcomes */
         ARG_TOKEN_PEG_OUT_LINES,           /* pegoutlines */
@@ -7299,7 +7300,7 @@ void config_load_data(Config *config, ErrorStack *error_stack) {
     return;
   }
 
-  config_load_bool(config, ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME,
+  config_load_bool(config, ARG_TOKEN_PC_STATIC_PRE,
                    &config->play_chooser_static_pre_endgame, error_stack);
   if (!error_stack_is_empty(error_stack)) {
     return;
@@ -9456,7 +9457,7 @@ Config *config_create(const ConfigArgs *config_args, ErrorStack *error_stack) {
   arg(ARG_TOKEN_ENDGAME_TOP_K, "etopk", 1, 1);
   arg(ARG_TOKEN_ENDGAME_OPPONENT_STATIC, "estatic", 1, 1);
   arg(ARG_TOKEN_ENDGAME_FIRST_WIN, "efirstwin", 1, 1);
-  arg(ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME, "pcstaticpre", 1, 1);
+  arg(ARG_TOKEN_PC_STATIC_PRE, "pcstaticpre", 1, 1);
   arg(ARG_TOKEN_ENDGAME_TIME_LIMIT, "etlim", 1, 1);
   arg(ARG_TOKEN_PEG_TOP_K, "pegtopk", 1, 1);
   arg(ARG_TOKEN_PEG_TIME_LIMIT, "pegtlim", 1, 1);
@@ -10015,7 +10016,7 @@ void config_add_settings_to_string_builder(const Config *config,
       config_add_bool_setting_to_string_builder(config, sb, arg_token,
                                                 config->endgame_first_win);
       break;
-    case ARG_TOKEN_PLAY_CHOOSER_STATIC_PRE_ENDGAME:
+    case ARG_TOKEN_PC_STATIC_PRE:
       config_add_bool_setting_to_string_builder(
           config, sb, arg_token, config->play_chooser_static_pre_endgame);
       break;

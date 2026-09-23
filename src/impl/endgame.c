@@ -1573,8 +1573,8 @@ int generate_stm_plays(EndgameCtxWorker *worker, int depth) {
     // is the only child of this node.
     const Move *top_move =
         get_top_equity_move(worker->game_copy, worker->static_move_list);
-    SmallMove *arena_small_move = (SmallMove *)arena_alloc(
-        worker->small_move_arena, sizeof(SmallMove));
+    SmallMove *arena_small_move =
+        (SmallMove *)arena_alloc(worker->small_move_arena, sizeof(SmallMove));
     small_move_set_from_move(arena_small_move, top_move);
     return 1;
   }
