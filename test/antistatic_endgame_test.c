@@ -1,27 +1,36 @@
 // Antistatic endgame experiment: how much does solving endgames against a
-// static opponent gain over playing them statically?
+// static opponent gain over playing them statically, and over solving them
+// normally?
 //
 // For each seed, both players play their top static equity move until the bag
-// is empty. The endgame is then played out three ways from that same
-// position: static vs static (the baseline), the antistatic solver as player
-// one against a static player two, and the reverse. Everything before the
-// endgame is shared, so any difference in the result comes from the endgame.
+// is empty. The endgame is then played out five ways from that same position:
+// static vs static (the baseline), then each solver as player one against a
+// static player two and as player two against a static player one.
+// Everything before the endgame is shared, so any difference in the result
+// comes from the endgame.
 //
-// The antistatic player runs the endgame solver on each of its turns with
-// opponent_static set: its opponent is modeled exactly as the static player it
-// faces.
+// The two solvers run the endgame solver on each of their turns with the same
+// time limit and search mode:
+//   - antistatic: opponent_static set, so its opponent is modeled exactly as
+//     the static player it faces;
+//   - normal: the endgame command's solver, which assumes the opponent plays
+//     its best reply.
+// Each solver has its own transposition table, since a position's value
+// differs between the two opponent models.
 //
 // Environment variables (all optional):
 //   ANTISTATIC_GAMES     number of games (default 10)
 //   ANTISTATIC_SEED      seed of the first game; game i uses seed + i
 //                        (default 1)
-//   ANTISTATIC_SECONDS   per-move endgame solver time limit (default 10). The
+//   ANTISTATIC_SECONDS   per-move endgame solver time limit, for both solvers
+//                        (default 10). The
 //                        solver searches until this deadline or until it
 //                        completes; a solve cut short plays the best move from
 //                        its deepest completed depth and is counted as
 //                        incomplete. If the solver returns no move at all, the
 //                        static move is played and counted.
-//   ANTISTATIC_FIRSTWIN  1 = first-win search (default), 0 = maximize spread
+//   ANTISTATIC_FIRSTWIN  1 = first-win search (default), 0 = maximize spread;
+//                        applies to both solvers
 //   ANTISTATIC_LEX       lexicon (default NWL23)
 //   ANTISTATIC_OUT       directory for the per-game logs (default
 //                        antistatic_games); a summary is printed to stdout
@@ -56,20 +65,46 @@
 #include <sys/stat.h>
 
 enum {
-  ANTISTATIC_NONE = -1,
-  // Variants: 0 = static vs static, 1 = antistatic player one,
-  // 2 = antistatic player two.
-  NUM_VARIANTS = 3,
+  NO_SOLVER_PLAYER = -1,
+  // Variants: static vs static, then each solver as player one and as player
+  // two.
+  NUM_VARIANTS = 5,
 };
+
+typedef enum {
+  SOLVER_ANTISTATIC,
+  SOLVER_NORMAL,
+  NUM_SOLVERS,
+} solver_t;
+
+static const char *const solver_names[NUM_SOLVERS] = {"Antistatic", "Normal"};
+
+typedef struct Variant {
+  const char *name;
+  int solver_player; // NO_SOLVER_PLAYER for static vs static
+  solver_t solver;
+} Variant;
+
+static const Variant variants[NUM_VARIANTS] = {
+    {"Static vs static", NO_SOLVER_PLAYER, SOLVER_ANTISTATIC},
+    {"Antistatic P1 vs static P2", 0, SOLVER_ANTISTATIC},
+    {"Static P1 vs antistatic P2", 1, SOLVER_ANTISTATIC},
+    {"Normal solver P1 vs static P2", 0, SOLVER_NORMAL},
+    {"Static P1 vs normal solver P2", 1, SOLVER_NORMAL},
+};
+
+typedef struct SolverStats {
+  int moves;
+  // Solves cut short by the time limit before completing the full depth.
+  int incomplete;
+  // Solves that returned no move, so the static move was played instead.
+  int no_move;
+  double seconds;
+} SolverStats;
 
 typedef struct EndgameOutcome {
   int final_spread; // player one's score minus player two's
-  int antistatic_moves;
-  // Solves cut short by the time limit before completing the full depth.
-  int antistatic_incomplete;
-  // Solves that returned no move, so the static move was played instead.
-  int antistatic_no_move;
-  double antistatic_seconds;
+  SolverStats stats;
 } EndgameOutcome;
 
 static int env_int(const char *name, int default_value) {
@@ -122,13 +157,12 @@ static void log_and_play_move(StringBuilder *log, const Move *move, Game *game,
       equity_to_int(player_get_score(game_get_player(game, 1))), annotation);
 }
 
-// Picks the antistatic player's move with the endgame solver. Returns false
-// if the solver produced no move. Sets *depth to the depth the chosen move was
-// searched to.
-static bool choose_antistatic_move(Game *game, EndgameCtx **ctx,
-                                   EndgameResults *results, double seconds,
-                                   bool first_win, Move *out_move, int *depth,
-                                   double *elapsed) {
+// Picks a move with the endgame solver. Returns false if the solver produced
+// no move. Sets *depth to the depth the chosen move was searched to.
+static bool choose_solver_move(Game *game, solver_t solver, EndgameCtx **ctx,
+                               EndgameResults *results, double seconds,
+                               bool first_win, Move *out_move, int *depth,
+                               double *elapsed) {
   ThreadControl *thread_control = thread_control_create();
   thread_control_set_status(thread_control, THREAD_CONTROL_STATUS_STARTED);
   EndgameArgs args = {0};
@@ -138,6 +172,9 @@ static bool choose_antistatic_move(Game *game, EndgameCtx **ctx,
   args.tt_fraction_of_mem = 0.05;
   args.initial_small_move_arena_size = DEFAULT_INITIAL_SMALL_MOVE_ARENA_SIZE;
   args.num_threads = 1;
+  // The endgame command's defaults. opponent_static turns off both.
+  args.use_heuristics = true;
+  args.incremental_movegen = true;
   args.forced_pass_bypass = true;
   args.num_top_moves = 1;
   // No soft or hard limit: those stop iterative deepening early when the next
@@ -149,7 +186,7 @@ static bool choose_antistatic_move(Game *game, EndgameCtx **ctx,
       ctimer_monotonic_ns() + (int64_t)(seconds * 1.0e9);
   args.seed = 42;
   args.first_win = first_win;
-  args.opponent_static = true;
+  args.opponent_static = solver == SOLVER_ANTISTATIC;
 
   Timer timer;
   ctimer_start(&timer);
@@ -173,33 +210,33 @@ static bool choose_antistatic_move(Game *game, EndgameCtx **ctx,
   return true;
 }
 
-// Plays out the endgame from `start`, with `antistatic_player` (or nobody)
-// using the solver and everyone else playing statically.
-static EndgameOutcome play_out_endgame(const Game *start, int antistatic_player,
-                                       double seconds, bool first_win,
-                                       MoveList *move_list, EndgameCtx **ctx,
-                                       EndgameResults *results,
-                                       StringBuilder *log) {
+// Plays out the endgame from `start`: the variant's solver player (if any)
+// uses its solver and everyone else plays statically.
+static EndgameOutcome
+play_out_endgame(const Game *start, const Variant *variant, double seconds,
+                 bool first_win, MoveList *move_list, EndgameCtx **ctx,
+                 EndgameResults *results, StringBuilder *log) {
   EndgameOutcome outcome = {0};
   Game *game = game_duplicate(start);
   Move move;
   while (game_get_game_end_reason(game) == GAME_END_REASON_NONE) {
-    if (game_get_player_on_turn_index(game) == antistatic_player) {
+    if (game_get_player_on_turn_index(game) == variant->solver_player) {
       int depth = 0;
       double elapsed = 0.0;
-      const bool ok = choose_antistatic_move(
-          game, ctx, results, seconds, first_win, &move, &depth, &elapsed);
-      outcome.antistatic_moves++;
-      outcome.antistatic_seconds += elapsed;
+      const bool ok =
+          choose_solver_move(game, variant->solver, ctx, results, seconds,
+                             first_win, &move, &depth, &elapsed);
+      outcome.stats.moves++;
+      outcome.stats.seconds += elapsed;
       char annotation[96];
       if (ok) {
         const bool incomplete = depth < MAX_VARIANT_LENGTH;
-        outcome.antistatic_incomplete += incomplete;
+        outcome.stats.incomplete += incomplete;
         (void)snprintf(annotation, sizeof(annotation),
                        "  [solver %.2fs, depth %d%s]", elapsed, depth,
                        incomplete ? ", incomplete" : "");
       } else {
-        outcome.antistatic_no_move++;
+        outcome.stats.no_move++;
         move_copy(&move, get_top_equity_move(game, move_list));
         (void)snprintf(annotation, sizeof(annotation),
                        "  [solver %.2fs, no move; static move played]",
@@ -242,26 +279,24 @@ void test_antistatic_endgame_experiment(void) {
   Game *game = config_get_game(config);
   MoveList *move_list = move_list_create(1);
   EndgameResults *results = endgame_results_create();
-  EndgameCtx *ctx = NULL;
+  // One context, and so one transposition table, per solver.
+  EndgameCtx *ctxs[NUM_SOLVERS] = {NULL, NULL};
   ErrorStack *error_stack = error_stack_create();
 
   printf("antistatic endgame experiment: %d games from seed %d, %.1fs per "
          "move, %s, lexicon %s\n",
          num_games, first_seed, seconds, first_win ? "first-win" : "max spread",
          lexicon);
-  printf("%-6s %-6s %-9s %-9s %-9s %-10s %s\n", "game", "seed", "static",
-         "anti-P1", "anti-P2", "incomplete", "no-move");
+  printf("%-6s %-6s %-9s %-9s %-9s %-9s %-9s %-8s %-8s %s\n", "game", "seed",
+         "static", "anti-P1", "anti-P2", "norm-P1", "norm-P2", "anti-inc",
+         "norm-inc", "no-move");
   (void)fflush(stdout);
 
-  // Outcome changes relative to the baseline, from the antistatic player's
-  // point of view: [0] = antistatic player one, [1] = antistatic player two.
-  int improved[2] = {0};
-  int worsened[2] = {0};
-  long spread_gain[2] = {0};
-  int total_incomplete = 0;
-  int total_no_move = 0;
-  int total_antistatic_moves = 0;
-  double total_antistatic_seconds = 0.0;
+  // Outcome changes relative to the static baseline from the solver's seat:
+  // [solver][seat].
+  int improved[NUM_SOLVERS][2] = {{0}};
+  int worsened[NUM_SOLVERS][2] = {{0}};
+  SolverStats totals[NUM_SOLVERS] = {{0}};
   int games_played = 0;
 
   for (int game_index = 0; game_index < num_games; game_index++) {
@@ -286,6 +321,7 @@ void test_antistatic_endgame_experiment(void) {
       // Ended before the bag emptied (e.g. six scoreless turns): no endgame.
       printf("%-6d %-6d (game ended before the endgame)\n", game_index + 1,
              seed);
+      (void)fflush(stdout);
       string_builder_destroy(log);
       continue;
     }
@@ -298,37 +334,46 @@ void test_antistatic_endgame_experiment(void) {
     free(cgp);
 
     EndgameOutcome outcomes[NUM_VARIANTS];
-    const char *variant_names[NUM_VARIANTS] = {"Static vs static",
-                                               "Antistatic P1 vs static P2",
-                                               "Static P1 vs antistatic P2"};
-    const int antistatic_players[NUM_VARIANTS] = {ANTISTATIC_NONE, 0, 1};
-    for (int variant = 0; variant < NUM_VARIANTS; variant++) {
-      string_builder_add_formatted_string(log, "\n%s:\n",
-                                          variant_names[variant]);
-      outcomes[variant] =
-          play_out_endgame(game, antistatic_players[variant], seconds,
-                           first_win, move_list, &ctx, results, log);
-      total_incomplete += outcomes[variant].antistatic_incomplete;
-      total_no_move += outcomes[variant].antistatic_no_move;
-      total_antistatic_moves += outcomes[variant].antistatic_moves;
-      total_antistatic_seconds += outcomes[variant].antistatic_seconds;
+    SolverStats game_stats[NUM_SOLVERS] = {{0}};
+    for (int variant_idx = 0; variant_idx < NUM_VARIANTS; variant_idx++) {
+      const Variant *variant = &variants[variant_idx];
+      string_builder_add_formatted_string(log, "\n%s:\n", variant->name);
+      outcomes[variant_idx] =
+          play_out_endgame(game, variant, seconds, first_win, move_list,
+                           &ctxs[variant->solver], results, log);
+      if (variant->solver_player == NO_SOLVER_PLAYER) {
+        continue;
+      }
+      const SolverStats *stats = &outcomes[variant_idx].stats;
+      SolverStats *game_total = &game_stats[variant->solver];
+      game_total->moves += stats->moves;
+      game_total->incomplete += stats->incomplete;
+      game_total->no_move += stats->no_move;
+      game_total->seconds += stats->seconds;
+
+      // Result from the solver's seat, compared with static from that seat.
+      const int seat = variant->solver_player;
+      const int sign = seat == 0 ? 1 : -1;
+      const int solved = result_sign(sign * outcomes[variant_idx].final_spread);
+      const int baseline = result_sign(sign * outcomes[0].final_spread);
+      improved[variant->solver][seat] += solved > baseline;
+      worsened[variant->solver][seat] += solved < baseline;
+    }
+    for (int solver_idx = 0; solver_idx < NUM_SOLVERS; solver_idx++) {
+      totals[solver_idx].moves += game_stats[solver_idx].moves;
+      totals[solver_idx].incomplete += game_stats[solver_idx].incomplete;
+      totals[solver_idx].no_move += game_stats[solver_idx].no_move;
+      totals[solver_idx].seconds += game_stats[solver_idx].seconds;
     }
 
-    const int baseline = outcomes[0].final_spread;
-    for (int player = 0; player < 2; player++) {
-      // Spreads from the antistatic player's point of view.
-      const int sign = player == 0 ? 1 : -1;
-      const int antistatic = sign * outcomes[player + 1].final_spread;
-      const int static_result = sign * baseline;
-      improved[player] += result_sign(antistatic) > result_sign(static_result);
-      worsened[player] += result_sign(antistatic) < result_sign(static_result);
-      spread_gain[player] += antistatic - static_result;
-    }
-    printf("%-6d %-6d %+-9d %+-9d %+-9d %-10d %d\n", game_index + 1, seed,
-           baseline, outcomes[1].final_spread, outcomes[2].final_spread,
-           outcomes[1].antistatic_incomplete +
-               outcomes[2].antistatic_incomplete,
-           outcomes[1].antistatic_no_move + outcomes[2].antistatic_no_move);
+    printf("%-6d %-6d %+-9d %+-9d %+-9d %+-9d %+-9d %-8d %-8d %d\n",
+           game_index + 1, seed, outcomes[0].final_spread,
+           outcomes[1].final_spread, outcomes[2].final_spread,
+           outcomes[3].final_spread, outcomes[4].final_spread,
+           game_stats[SOLVER_ANTISTATIC].incomplete,
+           game_stats[SOLVER_NORMAL].incomplete,
+           game_stats[SOLVER_ANTISTATIC].no_move +
+               game_stats[SOLVER_NORMAL].no_move);
     // Flush each row so a run that is stopped keeps every finished game.
     (void)fflush(stdout);
 
@@ -342,20 +387,25 @@ void test_antistatic_endgame_experiment(void) {
 
   printf("\nSpreads above are player one's final spread.\n");
   printf("Endgames played: %d\n", games_played);
-  for (int player = 0; player < 2; player++) {
-    printf("Antistatic as P%d: better result in %d, worse in %d, mean spread "
-           "gain %+.2f\n",
-           player + 1, improved[player], worsened[player],
-           games_played > 0 ? (double)spread_gain[player] / games_played : 0.0);
+  for (int solver_idx = 0; solver_idx < NUM_SOLVERS; solver_idx++) {
+    for (int seat = 0; seat < 2; seat++) {
+      printf("%s as P%d: better result than static in %d, worse in %d\n",
+             solver_names[solver_idx], seat + 1, improved[solver_idx][seat],
+             worsened[solver_idx][seat]);
+    }
   }
-  printf("Antistatic solver: %d moves, %.2fs total, %d incomplete, %d no "
-         "move\n",
-         total_antistatic_moves, total_antistatic_seconds, total_incomplete,
-         total_no_move);
+  for (int solver_idx = 0; solver_idx < NUM_SOLVERS; solver_idx++) {
+    printf("%s solver: %d moves, %.2fs total, %d incomplete, %d no move\n",
+           solver_names[solver_idx], totals[solver_idx].moves,
+           totals[solver_idx].seconds, totals[solver_idx].incomplete,
+           totals[solver_idx].no_move);
+  }
   printf("Game logs: %s/\n", out_dir);
 
   error_stack_destroy(error_stack);
-  endgame_ctx_destroy(ctx);
+  for (int solver_idx = 0; solver_idx < NUM_SOLVERS; solver_idx++) {
+    endgame_ctx_destroy(ctxs[solver_idx]);
+  }
   endgame_results_destroy(results);
   move_list_destroy(move_list);
   config_destroy(config);

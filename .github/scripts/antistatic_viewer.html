@@ -107,6 +107,9 @@ header p { margin: 0; max-width: 68ch; }
 .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--surface); }
 .seg button { font: 600 14px "Barlow", system-ui, sans-serif; border: 0; background: transparent; color: var(--muted); padding: 7px 14px; cursor: pointer; }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--surface); }
+.filters { flex-wrap: wrap; justify-self: start; }
+.filters button .n { font-weight: 500; opacity: 0.8; margin-left: 4px; }
+.empty { padding: 14px 12px; color: var(--muted); }
 button:focus-visible, tr:focus-visible, .mv:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .stats { display: flex; flex-wrap: wrap; gap: 8px 22px; font-variant-numeric: tabular-nums; }
 .stats b { font-family: "Barlow Condensed", sans-serif; font-size: 20px; font-weight: 600; margin-right: 4px; }
@@ -189,9 +192,11 @@ summary { cursor: pointer; font: 600 17px "Barlow Condensed", sans-serif; }
   </div>
   <p class="note" id="mode-note"></p>
 
+  <div class="seg filters" id="filters" role="group" aria-label="Show games"></div>
+
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Seed</th><th>Endgame start</th><th>Static vs static</th><th>Antistatic P1</th><th>Antistatic P2</th><th>Solver time</th></tr></thead>
+      <thead><tr id="head-row"></tr></thead>
       <tbody id="rows"></tbody>
     </table>
   </div>
@@ -233,14 +238,49 @@ const PREMIUM = (() => {
   return m;
 })();
 const PREM_LABEL = {tw: "3W", dw: "2W", tl: "3L", dl: "2L"};
-const VAR_LABEL = ["Static vs static", "Antistatic P1", "Antistatic P2"];
+// Variation names come from the logs, e.g. "Antistatic P1 vs static P2" or
+// "Static P1 vs normal solver P2". Each non-static variation has a solver and
+// the seat it plays from.
+function variationInfo(name) {
+  const solver = /antistatic/i.test(name) ? "antistatic" : /normal/i.test(name) ? "normal" : null;
+  if (!solver) return { label: name, solver: null, seat: null };
+  const seat = /^Static P1 vs/.test(name) ? 2 : 1;
+  const label = `${solver === "antistatic" ? "Antistatic" : "Normal solver"} P${seat}`;
+  return { label, solver, seat };
+}
+const VARS = GAMES[0].modes[Object.keys(GAMES[0].modes)[0]].map(v => variationInfo(v.name));
+const VAR_LABEL = VARS.map(v => v.label);
+const HAS_NORMAL = VARS.some(v => v.solver === "normal");
+const points = s => s > 0 ? 1 : s < 0 ? 0 : 0.5;
+// Game points for the variation's seat, and for static from the same seat.
+function seatPoints(g, v) {
+  const vars = g.modes[state.mode], seat = VARS[v].seat;
+  const sign = seat === 1 ? 1 : -1;
+  return [points(sign * vars[v].spread), points(sign * vars[0].spread)];
+}
+function solverVars(solver) { return VARS.map((v, i) => v.solver === solver ? i : -1).filter(i => i >= 0); }
+function pointsFor(g, solver, seat) {
+  const i = VARS.findIndex(v => v.solver === solver && v.seat === seat);
+  const sign = seat === 1 ? 1 : -1;
+  return points(sign * g.modes[state.mode][i].spread);
+}
+const FILTERS = [
+  { id: "all", label: "All games", test: () => true },
+  { id: "anti-changed", label: "Antistatic changed the result", test: g => solverVars("antistatic").some(v => { const [a, b] = seatPoints(g, v); return a !== b; }) },
+  { id: "static-better", label: "Static did better than antistatic", test: g => solverVars("antistatic").some(v => { const [a, b] = seatPoints(g, v); return b > a; }) },
+];
+if (HAS_NORMAL) {
+  FILTERS.push(
+    { id: "normal-changed", label: "Normal solver changed the result", test: g => solverVars("normal").some(v => { const [a, b] = seatPoints(g, v); return a !== b; }) },
+    { id: "anti-vs-normal", label: "Antistatic and normal differ", test: g => [1, 2].some(seat => pointsFor(g, "antistatic", seat) !== pointsFor(g, "normal", seat)) });
+}
 const MODE_NOTE = {
   firstwin: "Win-only: the solver stops at the first line that proves a win (or a draw, if no win exists). Once a game is won it doesn't try to maximize the margin, so its spread can be lower than static's. This is the mode for maximizing win%.",
   spread: "Max spread: the solver finds the line with the best final spread. Its spread should never be worse than static's; this is the correctness check."
 };
 
 const MODES = Object.keys(GAMES[0].modes);
-const state = { mode: MODES.includes("firstwin") ? "firstwin" : MODES[0], seed: GAMES[0].seed, view: { type: "start" } };
+const state = { mode: MODES.includes("firstwin") ? "firstwin" : MODES[0], seed: GAMES[0].seed, view: { type: "start" }, filter: "all" };
 document.getElementById("eyebrow").textContent = META.eyebrow;
 document.getElementById("page-title").textContent = META.title;
 if (META.intro) document.getElementById("intro").textContent = META.intro;
@@ -280,15 +320,16 @@ function endgameStart(g) {
   scores[onTurn] = scoreA; scores[3 - onTurn] = scoreB;
   return { onTurn, racks, scores };
 }
-// Gain for the antistatic player in variation v (1 = P1, 2 = P2).
+// Spread gain over static for the solver in variation v, from its seat.
 function gain(g, v) {
   const vars = g.modes[state.mode];
-  const sign = v === 1 ? 1 : -1;
+  const sign = VARS[v].seat === 1 ? 1 : -1;
   return sign * (vars[v].spread - vars[0].spread);
 }
+// +1/-1 when the solver's result from its seat beats/trails static's.
 function flip(g, v) {
   const vars = g.modes[state.mode];
-  const sign = v === 1 ? 1 : -1;
+  const sign = VARS[v].seat === 1 ? 1 : -1;
   return Math.sign(sign * vars[v].spread) - Math.sign(sign * vars[0].spread);
 }
 function solverTime(g) {
@@ -299,7 +340,8 @@ function solverTime(g) {
 
 function renderStats() {
   let flips = 0, g1 = 0, g2 = 0, t = 0, n = 0;
-  GAMES.forEach(g => { flips += Math.abs(flip(g, 1)) + Math.abs(flip(g, 2)); g1 += gain(g, 1); g2 += gain(g, 2); const s = solverTime(g); t += s.t; n += s.n; });
+  const [anti1, anti2] = [VARS.findIndex(v => v.solver === "antistatic" && v.seat === 1), VARS.findIndex(v => v.solver === "antistatic" && v.seat === 2)];
+  GAMES.forEach(g => { flips += Math.abs(flip(g, anti1)) + Math.abs(flip(g, anti2)); g1 += gain(g, anti1); g2 += gain(g, anti2); const s = solverTime(g); t += s.t; n += s.n; });
   const k = GAMES.length;
   if (META.subset) {
     document.getElementById("stats").innerHTML =
@@ -332,14 +374,32 @@ function cell(g, v) {
   }
   return `<td><span class="res ${signCls(s)}">${fmt(s)}</span>${chip}</td>`;
 }
+function renderFilters() {
+  const bar = document.getElementById("filters");
+  bar.innerHTML = FILTERS.map(f => `<button type="button" data-filter="${f.id}" aria-pressed="${f.id === state.filter}">${f.label}<span class="n">${GAMES.filter(f.test).length}</span></button>`).join("");
+  bar.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+    state.filter = b.dataset.filter;
+    const shown = GAMES.filter(FILTERS.find(f => f.id === state.filter).test);
+    if (shown.length && !shown.some(g => g.seed === state.seed)) { state.seed = shown[0].seed; state.view = { type: "start" }; }
+    render();
+  }));
+}
 function renderRows() {
-  const rows = GAMES.map((g, i) => {
+  document.getElementById("head-row").innerHTML =
+    `<th>Seed</th><th>Endgame start</th>${VAR_LABEL.map(l => `<th>${l}</th>`).join("")}<th>Solver time</th>`;
+  const test = FILTERS.find(f => f.id === state.filter).test;
+  const shownGames = GAMES.filter(test);
+  if (!shownGames.length) {
+    document.getElementById("rows").innerHTML = `<tr><td class="empty" colspan="${VARS.length + 3}">No games match this filter.</td></tr>`;
+    return;
+  }
+  const rows = shownGames.map((g, i) => {
     const st = endgameStart(g);
     const s = solverTime(g);
     return `<tr tabindex="0" data-seed="${g.seed}" aria-selected="${g.seed === state.seed}">
       <td><strong>Seed ${g.seed}</strong></td>
       <td><span class="mono" style="font-size:13px">P1 ${st.scores[1]} – ${st.scores[2]} P2</span> <span class="muted">· P${st.onTurn} to move</span></td>
-      ${cell(g, 0)}${cell(g, 1)}${cell(g, 2)}
+      ${VARS.map((_, v) => cell(g, v)).join("")}
       <td class="mono muted" style="font-size:13px">${s.t.toFixed(2)}s</td></tr>`;
   });
   const body = document.getElementById("rows");
@@ -418,9 +478,13 @@ function renderVars(g) {
     let delta = "";
     if (vi > 0) {
       const d = gain(g, vi);
-      if (d === 0) delta = `<span class="muted">same spread as static</span>`;
-      else if (state.mode === "firstwin" && flip(g, vi) === 0) delta = `<span class="muted">${fmt(d)} spread for antistatic P${vi}, same result (win-only doesn't maximize spread)</span>`;
-      else delta = `<span class="${d > 0 ? "w" : "l"}">${fmt(d)} for antistatic P${vi}</span>`;
+      const who = VAR_LABEL[vi].replace("Antistatic", "antistatic").replace("Normal solver", "the normal solver");
+      const f = flip(g, vi);
+      if (f > 0) delta = `<span class="w">better result than static (${fmt(d)} spread for ${who})</span>`;
+      else if (f < 0) delta = `<span class="l">worse result than static (${fmt(d)} spread for ${who})</span>`;
+      else if (d === 0) delta = `<span class="muted">same spread as static</span>`;
+      else if (state.mode === "firstwin") delta = `<span class="muted">${fmt(d)} spread for ${who}, same result (win-only doesn't maximize spread)</span>`;
+      else delta = `<span class="${d > 0 ? "w" : "l"}">${fmt(d)} for ${who}</span>`;
     }
     const rows = variation.moves.map((mv, mi) => {
       const isAnti = mv.solver !== undefined;
@@ -442,6 +506,7 @@ function renderPre(g) {
 }
 function render() {
   renderStats();
+  renderFilters();
   renderRows();
   const g = game();
   const st = endgameStart(g);

@@ -1,9 +1,10 @@
 name: antistatic endgame experiment
 
 # Plays static vs static until the bag is empty, then plays each endgame out
-# with the static player and with the antistatic endgame solver on each side
-# (magpie_test antistaticeg). Seeds are split across parallel jobs; the
-# "report" job combines them. Start it from the Actions tab.
+# with the static player, and with the antistatic and the normal endgame
+# solver on each side against static (magpie_test antistaticeg). Seeds are
+# split across parallel jobs; the "report" job combines them. Start it from
+# the Actions tab.
 on:
   workflow_dispatch:
     inputs:
@@ -17,10 +18,10 @@ on:
         description: Seed of the first game
         default: "1"
       seconds:
-        description: Endgame solver time limit per move, in seconds
+        description: Endgame solver time limit per move, in seconds (both solvers)
         default: "10"
       first_win:
-        description: Win-only search (true) or maximize spread (false)
+        description: Win-only search (true) or maximize spread (false), for both solvers
         type: boolean
         default: true
       lexicon:
