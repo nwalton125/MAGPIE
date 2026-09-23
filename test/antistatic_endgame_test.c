@@ -17,7 +17,7 @@
 //                        (default 1)
 //   ANTISTATIC_SECONDS   per-move endgame solver time limit (default 10)
 //   ANTISTATIC_FIRSTWIN  1 = first-win search (default), 0 = maximize spread
-//   ANTISTATIC_LEX       lexicon (default CSW21)
+//   ANTISTATIC_LEX       lexicon (default NWL23)
 //   ANTISTATIC_OUT       directory for the per-game logs (default
 //                        antistatic_games); a summary is printed to stdout
 
@@ -205,7 +205,7 @@ void test_antistatic_endgame_experiment(void) {
   const int first_seed = env_int("ANTISTATIC_SEED", 1);
   const double seconds = env_double("ANTISTATIC_SECONDS", 10.0);
   const bool first_win = env_int("ANTISTATIC_FIRSTWIN", 1) != 0;
-  const char *lexicon = env_string("ANTISTATIC_LEX", "CSW21");
+  const char *lexicon = env_string("ANTISTATIC_LEX", "NWL23");
   const char *out_dir = env_string("ANTISTATIC_OUT", "antistatic_games");
   mkdir(out_dir, 0755);
 
