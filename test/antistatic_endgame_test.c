@@ -15,7 +15,12 @@
 //   ANTISTATIC_GAMES     number of games (default 10)
 //   ANTISTATIC_SEED      seed of the first game; game i uses seed + i
 //                        (default 1)
-//   ANTISTATIC_SECONDS   per-move endgame solver time limit (default 10)
+//   ANTISTATIC_SECONDS   per-move endgame solver time limit (default 10). The
+//                        solver searches until this deadline or until it
+//                        completes; a solve cut short plays the best move from
+//                        its deepest completed depth and is counted as
+//                        incomplete. If the solver returns no move at all, the
+//                        static move is played and counted.
 //   ANTISTATIC_FIRSTWIN  1 = first-win search (default), 0 = maximize spread
 //   ANTISTATIC_LEX       lexicon (default NWL23)
 //   ANTISTATIC_OUT       directory for the per-game logs (default
@@ -60,7 +65,10 @@ enum {
 typedef struct EndgameOutcome {
   int final_spread; // player one's score minus player two's
   int antistatic_moves;
-  int antistatic_timeouts;
+  // Solves cut short by the time limit before completing the full depth.
+  int antistatic_incomplete;
+  // Solves that returned no move, so the static move was played instead.
+  int antistatic_no_move;
   double antistatic_seconds;
 } EndgameOutcome;
 
@@ -115,11 +123,12 @@ static void log_and_play_move(StringBuilder *log, const Move *move, Game *game,
 }
 
 // Picks the antistatic player's move with the endgame solver. Returns false
-// if the solver produced no move.
+// if the solver produced no move. Sets *depth to the depth the chosen move was
+// searched to.
 static bool choose_antistatic_move(Game *game, EndgameCtx **ctx,
                                    EndgameResults *results, double seconds,
-                                   bool first_win, Move *out_move,
-                                   bool *timed_out, double *elapsed) {
+                                   bool first_win, Move *out_move, int *depth,
+                                   double *elapsed) {
   ThreadControl *thread_control = thread_control_create();
   thread_control_set_status(thread_control, THREAD_CONTROL_STATUS_STARTED);
   EndgameArgs args = {0};
@@ -131,8 +140,11 @@ static bool choose_antistatic_move(Game *game, EndgameCtx **ctx,
   args.num_threads = 1;
   args.forced_pass_bypass = true;
   args.num_top_moves = 1;
-  args.soft_time_limit = seconds;
-  args.hard_time_limit = seconds;
+  // No soft or hard limit: those stop iterative deepening early when the next
+  // depth is predicted not to fit, to save time for later moves. Here there
+  // is no clock to save time for, so search until the deadline.
+  args.soft_time_limit = 0.0;
+  args.hard_time_limit = 0.0;
   args.external_deadline_ns =
       ctimer_monotonic_ns() + (int64_t)(seconds * 1.0e9);
   args.seed = 42;
@@ -144,7 +156,7 @@ static bool choose_antistatic_move(Game *game, EndgameCtx **ctx,
   ErrorStack *error_stack = error_stack_create();
   endgame_solve(ctx, &args, results, error_stack);
   *elapsed = ctimer_elapsed_seconds(&timer);
-  *timed_out = *elapsed >= seconds * 0.99;
+  *depth = 0;
   const bool ok = error_stack_is_empty(error_stack);
   error_stack_destroy(error_stack);
   thread_control_destroy(thread_control);
@@ -157,6 +169,7 @@ static bool choose_antistatic_move(Game *game, EndgameCtx **ctx,
     return false;
   }
   small_move_to_move(out_move, &pv_line->moves[0], game_get_board(game));
+  *depth = endgame_results_get_depth(results, ENDGAME_RESULT_BEST);
   return true;
 }
 
@@ -172,17 +185,26 @@ static EndgameOutcome play_out_endgame(const Game *start, int antistatic_player,
   Move move;
   while (game_get_game_end_reason(game) == GAME_END_REASON_NONE) {
     if (game_get_player_on_turn_index(game) == antistatic_player) {
-      bool timed_out = false;
+      int depth = 0;
       double elapsed = 0.0;
       const bool ok = choose_antistatic_move(
-          game, ctx, results, seconds, first_win, &move, &timed_out, &elapsed);
-      assert(ok);
+          game, ctx, results, seconds, first_win, &move, &depth, &elapsed);
       outcome.antistatic_moves++;
-      outcome.antistatic_timeouts += timed_out;
       outcome.antistatic_seconds += elapsed;
-      char annotation[64];
-      (void)snprintf(annotation, sizeof(annotation), "  [solver %.2fs%s]",
-                     elapsed, timed_out ? ", TIMED OUT" : "");
+      char annotation[96];
+      if (ok) {
+        const bool incomplete = depth < MAX_VARIANT_LENGTH;
+        outcome.antistatic_incomplete += incomplete;
+        (void)snprintf(annotation, sizeof(annotation),
+                       "  [solver %.2fs, depth %d%s]", elapsed, depth,
+                       incomplete ? ", incomplete" : "");
+      } else {
+        outcome.antistatic_no_move++;
+        move_copy(&move, get_top_equity_move(game, move_list));
+        (void)snprintf(annotation, sizeof(annotation),
+                       "  [solver %.2fs, no move; static move played]",
+                       elapsed);
+      }
       log_and_play_move(log, &move, game, annotation);
     } else {
       move_copy(&move, get_top_equity_move(game, move_list));
@@ -227,15 +249,17 @@ void test_antistatic_endgame_experiment(void) {
          "move, %s, lexicon %s\n",
          num_games, first_seed, seconds, first_win ? "first-win" : "max spread",
          lexicon);
-  printf("%-6s %-6s %-9s %-9s %-9s %-7s\n", "game", "seed", "static", "anti-P1",
-         "anti-P2", "timeouts");
+  printf("%-6s %-6s %-9s %-9s %-9s %-10s %s\n", "game", "seed", "static",
+         "anti-P1", "anti-P2", "incomplete", "no-move");
+  (void)fflush(stdout);
 
   // Outcome changes relative to the baseline, from the antistatic player's
   // point of view: [0] = antistatic player one, [1] = antistatic player two.
   int improved[2] = {0};
   int worsened[2] = {0};
   long spread_gain[2] = {0};
-  int total_timeouts = 0;
+  int total_incomplete = 0;
+  int total_no_move = 0;
   int total_antistatic_moves = 0;
   double total_antistatic_seconds = 0.0;
   int games_played = 0;
@@ -284,7 +308,8 @@ void test_antistatic_endgame_experiment(void) {
       outcomes[variant] =
           play_out_endgame(game, antistatic_players[variant], seconds,
                            first_win, move_list, &ctx, results, log);
-      total_timeouts += outcomes[variant].antistatic_timeouts;
+      total_incomplete += outcomes[variant].antistatic_incomplete;
+      total_no_move += outcomes[variant].antistatic_no_move;
       total_antistatic_moves += outcomes[variant].antistatic_moves;
       total_antistatic_seconds += outcomes[variant].antistatic_seconds;
     }
@@ -299,9 +324,13 @@ void test_antistatic_endgame_experiment(void) {
       worsened[player] += result_sign(antistatic) < result_sign(static_result);
       spread_gain[player] += antistatic - static_result;
     }
-    printf("%-6d %-6d %+-9d %+-9d %+-9d %d\n", game_index + 1, seed, baseline,
-           outcomes[1].final_spread, outcomes[2].final_spread,
-           outcomes[1].antistatic_timeouts + outcomes[2].antistatic_timeouts);
+    printf("%-6d %-6d %+-9d %+-9d %+-9d %-10d %d\n", game_index + 1, seed,
+           baseline, outcomes[1].final_spread, outcomes[2].final_spread,
+           outcomes[1].antistatic_incomplete +
+               outcomes[2].antistatic_incomplete,
+           outcomes[1].antistatic_no_move + outcomes[2].antistatic_no_move);
+    // Flush each row so a run that is stopped keeps every finished game.
+    (void)fflush(stdout);
 
     char *path = get_formatted_string("%s/game_%04d_seed_%d.txt", out_dir,
                                       game_index + 1, seed);
@@ -319,8 +348,10 @@ void test_antistatic_endgame_experiment(void) {
            player + 1, improved[player], worsened[player],
            games_played > 0 ? (double)spread_gain[player] / games_played : 0.0);
   }
-  printf("Antistatic solver: %d moves, %.2fs total, %d timed out\n",
-         total_antistatic_moves, total_antistatic_seconds, total_timeouts);
+  printf("Antistatic solver: %d moves, %.2fs total, %d incomplete, %d no "
+         "move\n",
+         total_antistatic_moves, total_antistatic_seconds, total_incomplete,
+         total_no_move);
   printf("Game logs: %s/\n", out_dir);
 
   error_stack_destroy(error_stack);

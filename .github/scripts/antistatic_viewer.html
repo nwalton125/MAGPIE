@@ -400,7 +400,12 @@ function renderRacks(g) {
 }
 function moveRow(mv, key, isAnti, current) {
   const sub = [`<span class="mono">${mv.rack}</span>`, `<span class="mono">${mv.s1}–${mv.s2}</span>`];
-  if (mv.solver !== undefined) sub.push(`<span class="solver${mv.timedOut ? " to" : ""}">solver ${mv.solver.toFixed(2)}s${mv.timedOut ? ", timed out" : ""}</span>`);
+  if (mv.solver !== undefined) {
+    let note = "";
+    if (mv.noMove) note = ", no move; static played";
+    else if (mv.timedOut) note = mv.depth !== undefined ? `, cut short at depth ${mv.depth}` : ", timed out";
+    sub.push(`<span class="solver${mv.timedOut || mv.noMove ? " to" : ""}">solver ${mv.solver.toFixed(2)}s${note}</span>`);
+  }
   return `<button type="button" class="mv${isAnti ? " anti-move" : ""}" data-key="${key}" aria-current="${current}">
     <span class="p">P${mv.player}</span><span class="t">${mv.text}</span><span class="s">${mv.kind === "play" ? mv.score : ""}</span>
     <span class="sub">${sub.join("")}</span></button>`;

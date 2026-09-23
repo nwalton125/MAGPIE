@@ -24,12 +24,14 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import antistatic_viewer  # noqa: E402
 
-ROW = re.compile(
-    r"^\d+\s+(\d+)\s+([+-]?\d+)\s+([+-]?\d+)\s+([+-]?\d+)\s+(\d+)\s*$")
+# game, seed, P1's final spread in each variation, incomplete solves, and
+# (in newer logs) solves that returned no move.
+ROW = re.compile(r"^\d+\s+(\d+)\s+([+-]?\d+)\s+([+-]?\d+)\s+([+-]?\d+)"
+                 r"\s+(\d+)(?:\s+(\d+))?\s*$")
 NO_ENDGAME = re.compile(r"^\d+\s+(\d+)\s+\(game ended before the endgame\)")
 HEADER = re.compile(r"^antistatic endgame experiment: .*?, (.*)$")
-SOLVER = re.compile(
-    r"^Antistatic solver: (\d+) moves, ([\d.]+)s total, (\d+) timed out")
+SOLVER = re.compile(r"^Antistatic solver: (\d+) moves, ([\d.]+)s total, "
+                    r"(\d+) (?:incomplete|timed out)(?:, (\d+) no move)?")
 
 
 def points(spread):
@@ -59,7 +61,7 @@ def main():
     rows = {}
     no_endgame = set()
     settings = set()
-    solver_moves = solver_seconds = solver_timeouts = 0
+    solver_moves = solver_seconds = solver_incomplete = solver_no_move = 0
     summaries = sorted(
         glob.glob(os.path.join(results_dir, "**", "part_*.txt"), recursive=True))
     for path in summaries:
@@ -68,7 +70,9 @@ def main():
                 line = line.rstrip("\n")
                 if m := ROW.match(line):
                     seed = int(m.group(1))
-                    rows[seed] = tuple(int(m.group(i)) for i in range(2, 6))
+                    rows[seed] = (int(m.group(2)), int(m.group(3)),
+                                  int(m.group(4)), int(m.group(5)),
+                                  int(m.group(6) or 0))
                 elif m := NO_ENDGAME.match(line):
                     no_endgame.add(int(m.group(1)))
                 elif m := HEADER.match(line):
@@ -76,13 +80,15 @@ def main():
                 elif m := SOLVER.match(line):
                     solver_moves += int(m.group(1))
                     solver_seconds += float(m.group(2))
-                    solver_timeouts += int(m.group(3))
+                    solver_incomplete += int(m.group(3))
+                    solver_no_move += int(m.group(4) or 0)
 
     seeds = sorted(rows)
     with open(os.path.join(report_dir, "results.csv"), "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(
-            ["seed", "static", "antistatic_p1", "antistatic_p2", "timeouts"])
+            ["seed", "static", "antistatic_p1", "antistatic_p2", "incomplete",
+             "no_move"])
         for seed in seeds:
             writer.writerow([seed, *rows[seed]])
 
@@ -166,8 +172,11 @@ def main():
     out.append(f"Average over both seats: **{100 * both[0]:+.2f} ± "
                f"{100 * both[1]:.2f}** win% points per endgame.")
     out.append("")
-    out.append(f"Solver: {solver_moves} moves, {solver_seconds:.1f}s total, "
-               f"**{solver_timeouts} timed out**.")
+    out.append(f"Solver: {solver_moves} moves, {solver_seconds:.1f}s total. "
+               f"**{solver_incomplete}** cut short by the time limit (played "
+               f"the best move from the deepest completed depth); "
+               f"**{solver_no_move}** returned no move (played the static "
+               f"move).")
     if changed:
         out.append("")
         out.append("Games where the result changed (logs in `changed/`):")

@@ -15,7 +15,9 @@ import os
 import re
 
 MOVE = re.compile(r"^  P([12]) (\S*)  (.*?)  (-?\d+)-(-?\d+)"
-                  r"(?:  \[solver ([\d.]+)s(, TIMED OUT)?\])?$")
+                  r"(?:  \[solver ([\d.]+)s(?:, depth (\d+))?"
+                  r"(, incomplete|, TIMED OUT|, no move; static move played)?"
+                  r"\])?$")
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "antistatic_viewer.html")
 
@@ -24,12 +26,15 @@ def parse_move(line):
     m = MOVE.match(line)
     if not m:
         return None
-    player, rack, text, s1, s2, solver, timed_out = m.groups()
+    player, rack, text, s1, s2, solver, depth, flag = m.groups()
     move = {"player": int(player), "rack": rack, "s1": int(s1),
             "s2": int(s2)}
     if solver is not None:
         move["solver"] = float(solver)
-        move["timedOut"] = bool(timed_out)
+        move["timedOut"] = flag in (", incomplete", ", TIMED OUT")
+        move["noMove"] = flag == ", no move; static move played"
+        if depth is not None:
+            move["depth"] = int(depth)
     text = text.strip()
     if m := re.match(r"^\(exch (\S+)\)$", text):
         move.update(kind="exchange", text=f"exchange {m.group(1)}", score=0)
