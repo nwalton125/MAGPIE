@@ -1016,7 +1016,44 @@ static void test_challenge_stage_combinations(void) {
   config_destroy(config);
 }
 
+// The opponent holds only a V that it can't play, so it passes until the
+// chooser goes out. A full spread solve against the static opponent takes
+// minutes here (the chooser gets every move), but the first-win search proves
+// 15A WEARE(D) for 33 wins almost at once.
+static void test_endgame_static_opponent_first_win(void) {
+  Config *config = config_create_or_die(
+      "set -lex CSW21 -s1 equity -s2 equity -r1 all -r2 all -threads 1");
+  load_and_exec_config_or_die(
+      config,
+      "cgp 4EXODE6/1DOFF1KERATIN1U/1OHO8YEN/1POOJA1B3MEWS/5SQUINTY2A/"
+      "4RHINO1e3V/2B4C2R3E/GOAT1D1E2ZIN1d/1URACILS2E4/1PIG1S4T4/2L2R4T4/"
+      "2L2A1GENII3/2A2T1L7/5E1A7/5D1M7 AEEIRUW/V 410/409 0 -lex CSW21;");
+  Game *game = config_get_game(config);
+  PlayChooserStrategy strategy = {
+      .pre_endgame_eval = PLAY_CHOOSER_EVAL_STATIC,
+      .endgame_eval = PLAY_CHOOSER_EVAL_ENDGAME,
+      .endgame_opponent_static = true,
+      .endgame_first_win = true,
+      .fixed_seconds_per_move = 10.0,
+      .num_threads = 1,
+  };
+  ErrorStack *error_stack = error_stack_create();
+  PlayChooser *chooser = play_chooser_create(&strategy);
+  Timer timer;
+  ctimer_start(&timer);
+  Move move;
+  play_chooser_choose_move(chooser, game, &move, error_stack);
+  assert(error_stack_is_empty(error_stack));
+  assert(ctimer_elapsed_seconds(&timer) < 5.0);
+  assert(move_get_tiles_played(&move) == 5);
+  assert_move_score(&move, 33);
+  play_chooser_destroy(chooser);
+  error_stack_destroy(error_stack);
+  config_destroy(config);
+}
+
 void test_play_chooser(void) {
+  test_endgame_static_opponent_first_win();
   test_game_timer();
   test_play_chooser_clock_budget();
   test_play_chooser_fixed_short_budget();

@@ -1689,7 +1689,8 @@ void add_help_arg_to_string_builder(const Config *config, int token,
       examples[1] = "false";
       text = "Specifies whether the endgame solver assumes the opponent always "
              "plays its top static equity move instead of searching all of "
-             "the opponent's moves.";
+             "the opponent's moves. Also applies to the endgames of autoplay "
+             "players that use the play chooser.";
       break;
     case ARG_TOKEN_ENDGAME_FIRST_WIN:
       usages[0] = "<true_or_false>";
@@ -1697,7 +1698,9 @@ void add_help_arg_to_string_builder(const Config *config, int token,
       examples[1] = "false";
       text = "Specifies whether the endgame solver stops at the first line that "
              "proves a win instead of finding the best spread. The result is "
-             "only a win, draw, or loss; its value is not an exact spread.";
+             "only a win, draw, or loss; its value is not an exact spread. "
+             "Also applies to the endgames of autoplay players that use the "
+             "play chooser.";
       break;
     case ARG_TOKEN_ENDGAME_TIME_LIMIT:
       usages[0] = "<time_limit_seconds>";
@@ -3840,6 +3843,8 @@ void config_fill_autoplay_args(const Config *config,
         (PlayChooserStrategy){
             .pre_endgame_eval = PLAY_CHOOSER_EVAL_PEG,
             .endgame_eval = PLAY_CHOOSER_EVAL_ENDGAME,
+            .endgame_opponent_static = config->endgame_opponent_static,
+            .endgame_first_win = config->endgame_first_win,
             .win_pcts = config->win_pcts,
             .num_threads = num_worker_threads_per_sim,
             .peg_scenario_stride = config->peg_scenario_stride,

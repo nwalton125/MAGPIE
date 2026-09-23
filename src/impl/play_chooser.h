@@ -48,6 +48,13 @@ typedef struct PlayChooserStrategy {
   // Maximum endgame solve depth in plies; 0 = solve as deep as the time
   // budget allows.
   int endgame_plies;
+  // If true, the endgame solver assumes the opponent always plays its top
+  // static equity move (EndgameArgs.opponent_static).
+  bool endgame_opponent_static;
+  // If true, the endgame solver stops at the first line that proves a win
+  // (EndgameArgs.first_win), so it picks a winning move without maximizing
+  // spread. Not applied to the fixed-window solves of challenge decisions.
+  bool endgame_first_win;
   // Per-move time budget in seconds. If > 0, a flat budget is used.
   // Otherwise, if game_timer is set and the game is timed, the budget is
   // the player's remaining clock split across an estimate of their

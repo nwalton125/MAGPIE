@@ -575,9 +575,10 @@ static bool play_chooser_run_endgame(
       /*enable_pv_display=*/false, /*soft_time_limit=*/budget_seconds * 0.9,
       /*hard_time_limit=*/budget_seconds, strategy->seed,
       /*skip_word_pruning=*/false, shared_tt, /*max_workers=*/0,
-      /*first_win=*/false, /*first_win_fallback_moves=*/0, use_window,
-      window_alpha, window_beta, deadline_ns,
-      /*actual_move=*/NULL, /*opponent_static=*/false, &endgame_args);
+      strategy->endgame_first_win && !use_window,
+      /*first_win_fallback_moves=*/0, use_window, window_alpha, window_beta,
+      deadline_ns, /*actual_move=*/NULL, strategy->endgame_opponent_static,
+      &endgame_args);
 
   endgame_solve(endgame_ctx, &endgame_args, endgame_results, error_stack);
   if (play_chooser_benchmark_is_enabled()) {
