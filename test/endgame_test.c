@@ -1672,7 +1672,96 @@ static void test_root_pvs_actual_pass(void) {
   config_destroy(config);
 }
 
+// Solves `cgp` against a static opponent and checks that every opponent move
+// in the principal variation is the opponent's top static equity move,
+// recomputed with a from-scratch move generation on a separate copy of the
+// game. Returns the solved value.
+static int32_t solve_static_opponent_endgame(const char *cgp, int plies,
+                                             int num_threads) {
+  Config *config = config_create_or_die("set -s1 score -s2 score");
+  load_and_exec_config_or_die(config, cgp);
+  Game *game = config_get_game(config);
+  EndgameResults *results = config_get_endgame_results(config);
+
+  EndgameCtx *ctx = NULL;
+  EndgameArgs args = {0};
+  args.thread_control = config_get_thread_control(config);
+  args.game = game;
+  args.plies = plies;
+  args.tt_fraction_of_mem = 0.05;
+  args.initial_small_move_arena_size = DEFAULT_INITIAL_SMALL_MOVE_ARENA_SIZE;
+  args.num_threads = num_threads;
+  // Both are turned off by opponent_static.
+  args.use_heuristics = true;
+  args.incremental_movegen = true;
+  args.forced_pass_bypass = true;
+  args.enable_pv_display = true;
+  args.num_top_moves = 1;
+  args.seed = 42;
+  args.opponent_static = true;
+
+  ErrorStack *error_stack = error_stack_create();
+  endgame_solve(&ctx, &args, results, error_stack);
+  assert(error_stack_is_empty(error_stack));
+  const PVLine *pv_line =
+      endgame_results_get_pvline(results, ENDGAME_RESULT_BEST);
+  assert(pv_line->num_moves > 0);
+
+  const int solving_player = game_get_player_on_turn_index(game);
+  Game *game_copy = game_duplicate(game);
+  MoveList *move_list = move_list_create(1);
+  Move pv_move;
+  for (int i = 0; i < pv_line->num_moves &&
+                  game_get_game_end_reason(game_copy) == GAME_END_REASON_NONE;
+       i++) {
+    small_move_to_move(&pv_move, &pv_line->moves[i], game_get_board(game_copy));
+    if (game_get_player_on_turn_index(game_copy) != solving_player) {
+      const Move *top_move = get_top_equity_move(game_copy, move_list);
+      assert(compare_moves_without_equity(top_move, &pv_move, true) == -1);
+    }
+    play_move(&pv_move, game_copy, NULL);
+  }
+
+  const int32_t value = pv_line->score;
+  move_list_destroy(move_list);
+  game_destroy(game_copy);
+  error_stack_destroy(error_stack);
+  endgame_ctx_destroy(ctx);
+  config_destroy(config);
+  return value;
+}
+
+void test_static_opponent(void) {
+  // Against a searching opponent this endgame is worth 11.
+  const char *standard_cgp =
+      "cgp "
+      "9A1PIXY/9S1L3/2ToWNLETS1O3/9U1DA1R/3GERANIAL1U1I/9g2T1C/8WE2OBI/"
+      "6EMU4ON/6AID3GO1/5HUN4ET1/4ZA1T4ME1/1Q1FAKEY3JOES/FIVE1E5IT1C/"
+      "5SPORRAN2A/6ORE2N2D BGIV/DEHILOR 384/389 0 -lex NWL20";
+  // Against a searching opponent this endgame is worth -116.
+  const char *very_deep_cgp =
+      "cgp "
+      "14C/13QI/12FIE/10VEE1R/9KIT2G/8CIG1IDE/8UTA2AS/7ST1SYPh1/6JA5A1/"
+      "5WOLD2BOBA/3PLOT1R1NU1EX/Y1VEIN1NOR1mOA1/UT1AT1N1L2FEH1/"
+      "GUR2WIRER5/SNEEZED8 ADENOOO/AHIILMM 353/236 0 -lex CSW21;";
+  const int32_t standard_value =
+      solve_static_opponent_endgame(standard_cgp, MAX_SEARCH_DEPTH, 1);
+  const int32_t very_deep_value =
+      solve_static_opponent_endgame(very_deep_cgp, MAX_SEARCH_DEPTH, 1);
+  printf("static opponent: standard=%d very_deep=%d\n", standard_value,
+         very_deep_value);
+  // Multithreaded solves must agree.
+  assert(solve_static_opponent_endgame(standard_cgp, MAX_SEARCH_DEPTH, 4) ==
+         standard_value);
+  assert(solve_static_opponent_endgame(very_deep_cgp, MAX_SEARCH_DEPTH, 4) ==
+         very_deep_value);
+  // Against a weaker opponent, the solving player can only do better.
+  assert(standard_value >= 11);
+  assert(very_deep_value >= -116);
+}
+
 void test_endgame(void) {
+  test_static_opponent();
   test_root_pvs_actual_pass();
   test_before_search_callback();
   test_single_pv_display();

@@ -231,6 +231,11 @@ typedef struct EndgameArgs {
   // every IDS depth so it always gets an unnarrowed [alpha, beta] window,
   // the same guarantee the root's first move always gets.
   const Move *actual_move;
+  // If true, the solving player's opponent is not searched: it always plays
+  // its top static equity move (see get_top_equity_move), with the static
+  // evaluator's deterministic tiebreaks. Turns off use_heuristics and
+  // incremental_movegen.
+  bool opponent_static;
 } EndgameArgs;
 
 // Fills every EndgameArgs field from an explicit argument, so that adding a
@@ -258,7 +263,7 @@ static inline void endgame_args_fill(
     const int first_win_fallback_moves, const bool use_initial_window,
     const int32_t initial_alpha, const int32_t initial_beta,
     const int64_t external_deadline_ns, const Move *actual_move,
-    EndgameArgs *endgame_args) {
+    const bool opponent_static, EndgameArgs *endgame_args) {
   endgame_args->thread_control = thread_control;
   endgame_args->game = game;
   endgame_args->tt_fraction_of_mem = tt_fraction_of_mem;
@@ -290,6 +295,7 @@ static inline void endgame_args_fill(
   endgame_args->initial_beta = initial_beta;
   endgame_args->external_deadline_ns = external_deadline_ns;
   endgame_args->actual_move = actual_move;
+  endgame_args->opponent_static = opponent_static;
 }
 
 void pvline_extend_from_tt(PVLine *pv_line, Game *game_copy,

@@ -577,7 +577,7 @@ static bool play_chooser_run_endgame(
       /*skip_word_pruning=*/false, shared_tt, /*max_workers=*/0,
       /*first_win=*/false, /*first_win_fallback_moves=*/0, use_window,
       window_alpha, window_beta, deadline_ns,
-      /*actual_move=*/NULL, &endgame_args);
+      /*actual_move=*/NULL, /*opponent_static=*/false, &endgame_args);
 
   endgame_solve(endgame_ctx, &endgame_args, endgame_results, error_stack);
   if (play_chooser_benchmark_is_enabled()) {

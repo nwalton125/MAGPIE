@@ -1204,7 +1204,8 @@ static int32_t peg_nested_endgame_value(PegWorker *worker, Game *game,
       // nested endgames are small and many; no core injection
       /*max_workers=*/0, /*first_win=*/false, /*first_win_fallback_moves=*/0,
       /*use_initial_window=*/false, /*initial_alpha=*/0, /*initial_beta=*/0,
-      deadline_ns, /*actual_move=*/NULL, &ea);
+      deadline_ns, /*actual_move=*/NULL,
+      /*opponent_static=*/false, &ea);
   endgame_results_reset(worker->eg_results);
   endgame_solve_inline(&worker->eg_ctx, &ea, worker->eg_results);
   if (endgame_results_get_depth(worker->eg_results, ENDGAME_RESULT_BEST) < 0) {
@@ -1685,7 +1686,7 @@ static int32_t peg_eval_leaf(PegEvalCtx *ctx, Game *game) {
       /*max_workers=*/ctx->injection_cap, /*first_win=*/false,
       /*first_win_fallback_moves=*/0, /*use_initial_window=*/false,
       /*initial_alpha=*/0, /*initial_beta=*/0, ctx->deadline_ns,
-      /*actual_move=*/NULL, &ea);
+      /*actual_move=*/NULL, /*opponent_static=*/false, &ea);
   endgame_results_reset(ctx->worker->eg_results);
   endgame_solve_inline(&ctx->worker->eg_ctx, &ea, ctx->worker->eg_results);
   // If the solver was interrupted before completing any search depth (depth

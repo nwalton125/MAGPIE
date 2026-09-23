@@ -138,6 +138,9 @@ struct EndgameCtx {
   bool use_heuristics;
   bool forced_pass_bypass;
   bool incremental_movegen;
+  // The opponent always plays its top static equity move
+  // (EndgameArgs.opponent_static).
+  bool opponent_static;
   PVLine principal_variation;
   // If non-NULL, guarantee an exact value for this move alongside the best
   // move (see EndgameArgs.actual_move). Owned by the caller; valid only for
@@ -233,6 +236,8 @@ struct EndgameCtxWorker {
   Game *game_copy;
   Arena *small_move_arena;
   MoveList *move_list;
+  // Holds the static opponent's top equity move (opponent_static only).
+  MoveList *static_move_list;
   // The incremental move lists (EndgameArgs.incremental_movegen), or NULL
   // when the current solve generates from scratch at every node. The lists
   // themselves are allocated on the first solve that enables them and kept
@@ -705,9 +710,15 @@ void endgame_ctx_reset(EndgameCtx *es, EndgameResults *results,
   es->transposition_table_optim = true;
   es->iterative_deepening_optim = true;
   es->negascout_optim = true;
-  es->use_heuristics = endgame_args->use_heuristics;
+  es->opponent_static = endgame_args->opponent_static;
+  // The greedy leaf playout scores lines with a greedy opponent rather than the
+  // static one, and the incremental move lists expect both sides' full play
+  // lists along the path, so the static opponent turns both off.
+  es->use_heuristics =
+      endgame_args->use_heuristics && !endgame_args->opponent_static;
   es->forced_pass_bypass = endgame_args->forced_pass_bypass;
-  es->incremental_movegen = endgame_args->incremental_movegen;
+  es->incremental_movegen =
+      endgame_args->incremental_movegen && !endgame_args->opponent_static;
   es->num_top_moves = endgame_args->num_top_moves;
   // The in-search top-K array (topk_values) and the live multi-PV leaderboard
   // are sized to MAX_ENDGAME_DISPLAY_PVS; clamp so a caller asking for more
@@ -1070,6 +1081,7 @@ static void solver_worker_destroy(EndgameCtxWorker *solver_worker) {
   }
   game_destroy(solver_worker->game_copy);
   small_move_list_destroy(solver_worker->move_list);
+  move_list_destroy(solver_worker->static_move_list);
   arena_destroy(solver_worker->small_move_arena);
   path_move_lists_destroy(solver_worker->path_lists_storage);
   prng_destroy(solver_worker->prng);
@@ -1110,6 +1122,7 @@ static EndgameCtxWorker *endgame_ctx_create_worker(EndgameCtx *solver,
 
   solver_worker->move_list =
       move_list_create_small(DEFAULT_ENDGAME_MOVELIST_CAPACITY);
+  solver_worker->static_move_list = move_list_create(1);
 
   solver_worker->small_move_arena =
       create_arena(solver->initial_small_move_arena_size, 16);
@@ -1515,6 +1528,29 @@ static int copy_derived_plays_to_arena(EndgameCtxWorker *worker,
   return count + 1;
 }
 
+// Encodes a Move as a SmallMove. Move stores the true board coordinates of a
+// vertical play, but small_move_set_all expects them transposed (as the move
+// generator has them) and swaps them itself, so swap them back first.
+static void small_move_set_from_move(SmallMove *small_move, const Move *move) {
+  small_move->metadata.estimated_value = 0;
+  if (move_get_type(move) == GAME_EVENT_PASS) {
+    small_move_set_as_pass(small_move);
+    return;
+  }
+  const bool is_vertical = board_is_dir_vertical(move_get_dir(move));
+  int row_start = move_get_row_start(move);
+  int col_start = move_get_col_start(move);
+  if (is_vertical) {
+    const int swap = row_start;
+    row_start = col_start;
+    col_start = swap;
+  }
+  small_move_set_all(small_move, move->tiles, 0,
+                     move_get_tiles_length(move) - 1, move_get_score(move),
+                     row_start, col_start, move_get_tiles_played(move),
+                     is_vertical, move_get_type(move));
+}
+
 int generate_stm_plays(EndgameCtxWorker *worker, int depth) {
   // stm means side to move
   // Lazy cross-set generation: only compute if not already valid.
@@ -1531,6 +1567,17 @@ int generate_stm_plays(EndgameCtxWorker *worker, int depth) {
   }
 
   int stm_idx = game_get_player_on_turn_index(worker->game_copy);
+  if (worker->solver->opponent_static &&
+      stm_idx != worker->solver->solving_player) {
+    // The static opponent only ever plays its top equity move, so that move
+    // is the only child of this node.
+    const Move *top_move =
+        get_top_equity_move(worker->game_copy, worker->static_move_list);
+    SmallMove *arena_small_move = (SmallMove *)arena_alloc(
+        worker->small_move_arena, sizeof(SmallMove));
+    small_move_set_from_move(arena_small_move, top_move);
+    return 1;
+  }
   const Rack *stm_rack =
       player_get_rack(game_get_player(worker->game_copy, stm_idx));
 

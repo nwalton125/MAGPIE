@@ -142,6 +142,8 @@ typedef enum {
   ARG_TOKEN_SHOW_BU,
   ARG_TOKEN_ENDGAME_PLIES,
   ARG_TOKEN_ENDGAME_TOP_K,
+  ARG_TOKEN_ENDGAME_OPPONENT_STATIC,
+  ARG_TOKEN_ENDGAME_FIRST_WIN,
   ARG_TOKEN_ENDGAME_TIME_LIMIT,
   ARG_TOKEN_PEG_TOP_K,
   ARG_TOKEN_PEG_TIME_LIMIT,
@@ -344,6 +346,8 @@ struct Config {
   int shplies;
   int endgame_plies;
   int endgame_top_k;
+  bool endgame_opponent_static;
+  bool endgame_first_win;
   // PEG scenario-sampling stride (halving stages, bag >= 3). 0 = solver
   // default.
   int peg_num_stages;
@@ -1679,6 +1683,22 @@ void add_help_arg_to_string_builder(const Config *config, int token,
       examples[1] = "5";
       text = "Number of top moves to return with full PVs from endgame solver.";
       break;
+    case ARG_TOKEN_ENDGAME_OPPONENT_STATIC:
+      usages[0] = "<true_or_false>";
+      examples[0] = "true";
+      examples[1] = "false";
+      text = "Specifies whether the endgame solver assumes the opponent always "
+             "plays its top static equity move instead of searching all of "
+             "the opponent's moves.";
+      break;
+    case ARG_TOKEN_ENDGAME_FIRST_WIN:
+      usages[0] = "<true_or_false>";
+      examples[0] = "true";
+      examples[1] = "false";
+      text = "Specifies whether the endgame solver stops at the first line that "
+             "proves a win instead of finding the best spread. The result is "
+             "only a win, draw, or loss; its value is not an exact spread.";
+      break;
     case ARG_TOKEN_ENDGAME_TIME_LIMIT:
       usages[0] = "<time_limit_seconds>";
       text = "Specifies the time limit in seconds for the endgame solver. A "
@@ -2387,7 +2407,9 @@ char *impl_help(Config *config, ErrorStack *error_stack) {
     // Game Analysis Options (alphabetical by name)
     static const arg_token_t game_analysis_opts[] = {
         ARG_TOKEN_CUTOFF,                  /* cutoff */
+        ARG_TOKEN_ENDGAME_FIRST_WIN,       /* efirstwin */
         ARG_TOKEN_ENDGAME_PLIES,           /* eplies */
+        ARG_TOKEN_ENDGAME_OPPONENT_STATIC, /* estatic */
         ARG_TOKEN_ENDGAME_TIME_LIMIT,      /* etlim */
         ARG_TOKEN_ENDGAME_TOP_K,           /* etopk */
         ARG_TOKEN_USE_GAME_PAIRS,          /* gp */
@@ -3316,9 +3338,10 @@ void config_fill_endgame_args(Config *config, EndgameArgs *endgame_args) {
       /*soft_time_limit=*/config->endgame_time_limit_seconds,
       /*hard_time_limit=*/config->endgame_time_limit_seconds, config->seed,
       /*skip_word_pruning=*/false, /*shared_tt=*/NULL, /*max_workers=*/0,
-      /*first_win=*/false, /*first_win_fallback_moves=*/0,
+      config->endgame_first_win, /*first_win_fallback_moves=*/0,
       /*use_initial_window=*/false, /*initial_alpha=*/0, /*initial_beta=*/0,
-      /*external_deadline_ns=*/0, /*actual_move=*/NULL, endgame_args);
+      /*external_deadline_ns=*/0, /*actual_move=*/NULL,
+      config->endgame_opponent_static, endgame_args);
 }
 
 void config_endgame(Config *config, EndgameResults *endgame_results,
@@ -7246,6 +7269,18 @@ void config_load_data(Config *config, ErrorStack *error_stack) {
     return;
   }
 
+  config_load_bool(config, ARG_TOKEN_ENDGAME_OPPONENT_STATIC,
+                   &config->endgame_opponent_static, error_stack);
+  if (!error_stack_is_empty(error_stack)) {
+    return;
+  }
+
+  config_load_bool(config, ARG_TOKEN_ENDGAME_FIRST_WIN,
+                   &config->endgame_first_win, error_stack);
+  if (!error_stack_is_empty(error_stack)) {
+    return;
+  }
+
   config_load_double(config, ARG_TOKEN_ENDGAME_TIME_LIMIT, 0, 1e9,
                      &config->endgame_time_limit_seconds, error_stack);
   if (!error_stack_is_empty(error_stack)) {
@@ -9395,6 +9430,8 @@ Config *config_create(const ConfigArgs *config_args, ErrorStack *error_stack) {
   arg(ARG_TOKEN_SHOW_BU, "showbu", 1, 1);
   arg(ARG_TOKEN_ENDGAME_PLIES, "eplies", 1, 1);
   arg(ARG_TOKEN_ENDGAME_TOP_K, "etopk", 1, 1);
+  arg(ARG_TOKEN_ENDGAME_OPPONENT_STATIC, "estatic", 1, 1);
+  arg(ARG_TOKEN_ENDGAME_FIRST_WIN, "efirstwin", 1, 1);
   arg(ARG_TOKEN_ENDGAME_TIME_LIMIT, "etlim", 1, 1);
   arg(ARG_TOKEN_PEG_TOP_K, "pegtopk", 1, 1);
   arg(ARG_TOKEN_PEG_TIME_LIMIT, "pegtlim", 1, 1);
@@ -9517,6 +9554,8 @@ Config *config_create(const ConfigArgs *config_args, ErrorStack *error_stack) {
   config->show_bu = false;
   config->endgame_plies = 6;
   config->endgame_top_k = 1;
+  config->endgame_opponent_static = false;
+  config->endgame_first_win = false;
   // -1 = no peg results yet; 0 stages = built-in schedule; 0 stride = solver
   // default; rational opponent; no only-solve / never-prune restrictions.
   config->peg_result.last_completed_stage = -1;
@@ -9941,6 +9980,14 @@ void config_add_settings_to_string_builder(const Config *config,
     case ARG_TOKEN_ENDGAME_TOP_K:
       config_add_int_setting_to_string_builder(config, sb, arg_token,
                                                config->endgame_top_k);
+      break;
+    case ARG_TOKEN_ENDGAME_OPPONENT_STATIC:
+      config_add_bool_setting_to_string_builder(
+          config, sb, arg_token, config->endgame_opponent_static);
+      break;
+    case ARG_TOKEN_ENDGAME_FIRST_WIN:
+      config_add_bool_setting_to_string_builder(config, sb, arg_token,
+                                                config->endgame_first_win);
       break;
     case ARG_TOKEN_ENDGAME_TIME_LIMIT:
       config_add_double_setting_to_string_builder(
