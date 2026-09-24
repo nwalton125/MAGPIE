@@ -3,6 +3,7 @@
 
 void test_endgame(void);
 void test_static_opponent(void);
+void test_endgame_repeat_solve_returns_move(void);
 void test_incremental_movegen_identical(void);
 void test_endgame_wasm(void);
 void test_endgame_outplay_zobrist_overflow(void);

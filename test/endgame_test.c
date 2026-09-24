@@ -391,6 +391,52 @@ void test_endgame_dynamic_worker_injection(void) {
 // top few root moves. It must agree in SIGN with the exact full-spread solve.
 // This position is a converged 63-point loss for the player on turn at 6 plies:
 // full-spread must report exactly -63, first_win a loss (strictly negative).
+// A solve that reuses a transposition table already holding the root position
+// must still return a move. The stored result can settle the root's window by
+// itself, and a first-win solve's fixed window is never widened and
+// re-searched, so a root cutoff used to return an empty principal variation.
+// Solving the same position twice with one context reproduces this, for both
+// the normal and the static-opponent solver.
+void test_endgame_repeat_solve_returns_move(void) {
+  const char *cgp =
+      "cgp "
+      "9A1PIXY/9S1L3/2ToWNLETS1O3/9U1DA1R/3GERANIAL1U1I/9g2T1C/8WE2OBI/"
+      "6EMU4ON/6AID3GO1/5HUN4ET1/4ZA1T4ME1/1Q1FAKEY3JOES/FIVE1E5IT1C/"
+      "5SPORRAN2A/6ORE2N2D BGIV/DEHILOR 384/389 0 -lex NWL20";
+  for (int opponent_static = 0; opponent_static < 2; opponent_static++) {
+    Config *config = config_create_or_die("set -s1 score -s2 score -threads 1");
+    load_and_exec_config_or_die(config, cgp);
+    Game *game = config_get_game(config);
+    EndgameResults *results = config_get_endgame_results(config);
+    EndgameCtx *ctx = NULL;
+    EndgameArgs args = {0};
+    args.thread_control = config_get_thread_control(config);
+    args.game = game;
+    args.plies = MAX_VARIANT_LENGTH;
+    args.tt_fraction_of_mem = 0.001;
+    args.initial_small_move_arena_size = DEFAULT_INITIAL_SMALL_MOVE_ARENA_SIZE;
+    args.num_threads = 1;
+    args.use_heuristics = true;
+    args.forced_pass_bypass = true;
+    args.num_top_moves = 1;
+    args.seed = 42;
+    args.first_win = true;
+    args.opponent_static = opponent_static;
+    for (int solve_idx = 0; solve_idx < 2; solve_idx++) {
+      endgame_solve_inline(&ctx, &args, results);
+      const PVLine *pv_line =
+          endgame_results_get_pvline(results, ENDGAME_RESULT_BEST);
+      printf("repeat solve (opponent_static=%d) %d: %d moves, value %d\n",
+             opponent_static, solve_idx + 1, pv_line->num_moves,
+             pv_line->score);
+      assert(pv_line->num_moves > 0);
+      assert(pv_line->score > 0);
+    }
+    endgame_ctx_destroy(ctx);
+    config_destroy(config);
+  }
+}
+
 void test_endgame_first_win_sign(void) {
   const char *cgp =
       "cgp "
@@ -1765,6 +1811,7 @@ void test_static_opponent(void) {
 
 void test_endgame(void) {
   test_static_opponent();
+  test_endgame_repeat_solve_returns_move();
   test_root_pvs_actual_pass();
   test_before_search_callback();
   test_single_pv_display();

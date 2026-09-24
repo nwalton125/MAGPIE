@@ -145,6 +145,7 @@ static TestEntry test_table[] = {
     {"winpct", test_win_pct},
     {"endgame", test_endgame},
     {"estatic", test_static_opponent},
+    {"egrepeat", test_endgame_repeat_solve_returns_move},
     {"antistaticeg", test_antistatic_endgame_experiment},
     {"endgameoutplay", test_endgame_outplay_zobrist_overflow},
     {"endgamefirstwin", test_endgame_first_win_sign},

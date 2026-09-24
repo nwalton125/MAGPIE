@@ -2621,11 +2621,22 @@ int32_t abdada_negamax(EndgameCtxWorker *worker, uint64_t node_key, int depth,
   int on_turn_spread = equity_to_int(player_get_score(player_on_turn) -
                                      player_get_score(other_player));
   uint64_t tt_move = INVALID_TINY_MOVE;
+  const bool is_root = worker->current_iterative_deepening_depth == depth;
 
   if (worker->solver->transposition_table_optim) {
     TTEntry tt_entry = transposition_table_lookup(
         worker->solver->transposition_table, node_key);
-    if (ttentry_valid(tt_entry) && ttentry_depth(tt_entry) >= (uint8_t)depth) {
+    // At the root, only take the hash move. A stored bound or exact value
+    // could end the root search without a best line: with a fixed window
+    // (first_win, use_initial_window) nothing widens and re-searches it, so
+    // the solve would return no move. This happens when a solve reuses a
+    // transposition table that already holds the root position, e.g. a
+    // repeated position after both players pass. Searching the root's children
+    // is cheap since they are in the table too.
+    if (is_root && ttentry_valid(tt_entry)) {
+      tt_move = ttentry_move(tt_entry);
+    } else if (ttentry_valid(tt_entry) &&
+               ttentry_depth(tt_entry) >= (uint8_t)depth) {
       int16_t score = ttentry_score(tt_entry);
       uint8_t flag = ttentry_flag(tt_entry);
       // add spread back in; we subtract it when storing.
@@ -2830,7 +2841,6 @@ int32_t abdada_negamax(EndgameCtxWorker *worker, uint64_t node_key, int depth,
   }
 
   // Multi-PV: track top-K values at root to widen alpha
-  const bool is_root = (worker->current_iterative_deepening_depth == depth);
   const bool is_ply2 =
       (worker->current_iterative_deepening_depth - 1 == depth) &&
       worker->ordinal == 0 && worker->in_first_root_move;
