@@ -2087,6 +2087,319 @@ static double static_opp_brute_force_1bag_win(const Game *game,
   return wins / n_unseen;
 }
 
+// Win-only result of `scenario` for the mover after it plays `cand` and the
+// static opponent replies: +1 win, 0.5 draw, 0 loss.
+static double static_opp_scenario_win(Game *scenario, const Move *cand,
+                                      int mover_idx, MoveList *move_list,
+                                      EndgameCtx **ctx,
+                                      EndgameResults *results) {
+  const int opp_idx = 1 - mover_idx;
+  play_move(cand, scenario, NULL);
+  while (game_get_game_end_reason(scenario) == GAME_END_REASON_NONE &&
+         game_get_player_on_turn_index(scenario) == opp_idx) {
+    play_move(get_top_equity_move(scenario, move_list), scenario, NULL);
+  }
+  int32_t final_spread =
+      equity_to_int(player_get_score(game_get_player(scenario, mover_idx)) -
+                    player_get_score(game_get_player(scenario, opp_idx)));
+  if (game_get_game_end_reason(scenario) == GAME_END_REASON_NONE) {
+    ThreadControl *thread_control = thread_control_create();
+    thread_control_set_status(thread_control, THREAD_CONTROL_STATUS_STARTED);
+    EndgameArgs args = {0};
+    args.thread_control = thread_control;
+    args.game = scenario;
+    args.plies = MAX_VARIANT_LENGTH;
+    args.tt_fraction_of_mem = 0.05;
+    args.initial_small_move_arena_size = DEFAULT_INITIAL_SMALL_MOVE_ARENA_SIZE;
+    args.num_threads = 1;
+    args.num_top_moves = 1;
+    args.seed = 42;
+    args.opponent_static = true;
+    args.first_win = true;
+    ErrorStack *error_stack = error_stack_create();
+    endgame_results_reset(results);
+    endgame_solve(ctx, &args, results, error_stack);
+    assert(error_stack_is_empty(error_stack));
+    final_spread += endgame_results_get_value(results, ENDGAME_RESULT_BEST);
+    error_stack_destroy(error_stack);
+    thread_control_destroy(thread_control);
+  }
+  if (final_spread > 0) {
+    return 1.0;
+  }
+  if (final_spread == 0) {
+    return 0.5;
+  }
+  return 0.0;
+}
+
+// Plays static moves from a seeded new game until the player on turn's static
+// move would leave exactly one tile in the bag, and stops before it. Returns
+// false if the game reaches the endgame first.
+static bool play_static_until_last_bag_tile(Game *game, uint64_t seed,
+                                            MoveList *move_list) {
+  game_reset(game);
+  game_seed(game, seed);
+  game_set_starting_player_index(game, 0);
+  draw_starting_racks(game);
+  while (game_get_game_end_reason(game) == GAME_END_REASON_NONE &&
+         !bag_is_empty(game_get_bag(game))) {
+    const Move *move = get_top_equity_move(game, move_list);
+    const int bag = bag_get_letters(game_get_bag(game));
+    if (move_get_tiles_played(move) >= 1 &&
+        bag - move_get_tiles_played(move) == 1 &&
+        move_get_type(move) == GAME_EVENT_TILE_PLACEMENT_MOVE) {
+      return true;
+    }
+    play_move(move, game, NULL);
+  }
+  return false;
+}
+
+// A 1-in-bag position reached right after the static opponent's move, with
+// brute-force scenario weights from inference on that move.
+typedef struct InferencePosition {
+  Game *prev_game; // the opponent on turn, before its move
+  Move observed;   // the opponent's static move
+  // Unseen tiles from the mover's side, as instances: the bag tile first, then
+  // the opponent's rack.
+  MachineLetter unseen[RACK_SIZE + 1];
+  int n_unseen;
+  // weights[i]: how many leave-sized subsets (by position) of the opponent's
+  // rack, when unseen[i] is the bag tile, make the static player play
+  // `observed`.
+  int64_t weights[RACK_SIZE + 1];
+  int leave_size;
+} InferencePosition;
+
+// Sets up `game` (from a seeded new game) at the mover's turn right after the
+// opponent's static move leaves one tile in the bag, and computes the brute-
+// force inference weights. Returns false if the seed reaches the endgame
+// without such a move.
+static bool setup_inference_position(Game *game, uint64_t seed,
+                                     MoveList *move_list,
+                                     InferencePosition *pos) {
+  if (!play_static_until_last_bag_tile(game, seed, move_list)) {
+    return false;
+  }
+  pos->prev_game = game_duplicate(game);
+  move_copy(&pos->observed, get_top_equity_move(game, move_list));
+  play_move(&pos->observed, game, NULL);
+  const int opp_idx = 1 - game_get_player_on_turn_index(game);
+  MachineLetter used[RACK_SIZE];
+  int n_used = 0;
+  for (int tile_idx = 0; tile_idx < move_get_tiles_length(&pos->observed);
+       tile_idx++) {
+    const MachineLetter tile = move_get_tile(&pos->observed, tile_idx);
+    if (tile != PLAYED_THROUGH_MARKER) {
+      used[n_used++] = get_is_blanked(tile) ? BLANK_MACHINE_LETTER : tile;
+    }
+  }
+  pos->leave_size = RACK_SIZE - n_used;
+  pos->n_unseen = bag_peek_tiles(game_get_bag(game), pos->unseen);
+  const Rack *opp_rack = player_get_rack(game_get_player(game, opp_idx));
+  const int ld_size = ld_get_size(game_get_ld(game));
+  for (int ml = 0; ml < ld_size; ml++) {
+    for (int count = rack_get_letter(opp_rack, ml); count > 0; count--) {
+      pos->unseen[pos->n_unseen++] = (MachineLetter)ml;
+    }
+  }
+  assert(pos->n_unseen == RACK_SIZE + 1);
+  Game *check = game_duplicate(pos->prev_game);
+  Rack *check_rack = player_get_rack(game_get_player(check, opp_idx));
+  for (int bag_tile_idx = 0; bag_tile_idx < pos->n_unseen; bag_tile_idx++) {
+    MachineLetter opp_tiles[RACK_SIZE];
+    int n_opp = 0;
+    for (int tile_idx = 0; tile_idx < pos->n_unseen; tile_idx++) {
+      if (tile_idx != bag_tile_idx) {
+        opp_tiles[n_opp++] = pos->unseen[tile_idx];
+      }
+    }
+    pos->weights[bag_tile_idx] = 0;
+    for (int mask = 0; mask < (1 << n_opp); mask++) {
+      if (__builtin_popcount((unsigned)mask) != pos->leave_size) {
+        continue;
+      }
+      rack_reset(check_rack);
+      for (int tile_idx = 0; tile_idx < n_used; tile_idx++) {
+        rack_add_letter(check_rack, used[tile_idx]);
+      }
+      for (int tile_idx = 0; tile_idx < n_opp; tile_idx++) {
+        if (mask & (1 << tile_idx)) {
+          rack_add_letter(check_rack, opp_tiles[tile_idx]);
+        }
+      }
+      const Move *top = get_top_equity_move(check, move_list);
+      if (compare_moves_without_equity(top, &pos->observed, true) == -1) {
+        pos->weights[bag_tile_idx]++;
+      }
+    }
+  }
+  game_destroy(check);
+  // The actual deal (the real bag tile is unseen[0]) must be consistent.
+  assert(pos->weights[0] > 0);
+  return true;
+}
+
+// Brute-force win% of `cand` over the position's scenarios, weighted by the
+// inference weights (use_weights) or uniformly.
+static double inference_brute_force_win(const Game *game,
+                                        const InferencePosition *pos,
+                                        const Move *cand, bool use_weights,
+                                        MoveList *move_list, EndgameCtx **ctx,
+                                        EndgameResults *results) {
+  const int mover_idx = game_get_player_on_turn_index(game);
+  const int opp_idx = 1 - mover_idx;
+  double weighted_win = 0.0;
+  int64_t weight_sum = 0;
+  for (int bag_tile_idx = 0; bag_tile_idx < pos->n_unseen; bag_tile_idx++) {
+    const int64_t weight = use_weights ? pos->weights[bag_tile_idx] : 1;
+    if (weight == 0) {
+      continue;
+    }
+    Game *scenario = game_duplicate(game);
+    Rack *scenario_opp = player_get_rack(game_get_player(scenario, opp_idx));
+    rack_reset(scenario_opp);
+    for (int tile_idx = 0; tile_idx < pos->n_unseen; tile_idx++) {
+      if (tile_idx != bag_tile_idx) {
+        rack_add_letter(scenario_opp, pos->unseen[tile_idx]);
+      }
+    }
+    bag_set_to_tiles(game_get_bag(scenario), &pos->unseen[bag_tile_idx], 1);
+    weighted_win +=
+        (double)weight * static_opp_scenario_win(scenario, cand, mover_idx,
+                                                 move_list, ctx, results);
+    weight_sum += weight;
+    game_destroy(scenario);
+  }
+  return weighted_win / (double)weight_sum;
+}
+
+// Inference: after the static opponent plays its move to leave one tile in the
+// bag, PEG_OPP_STATIC with inference_prev_game/move must weight each scenario
+// by the number of the opponent rack's leaves that make the static player play
+// that move. Finds a position where inference changes some candidate's win%,
+// then checks an exhaustive solve's win% for a few candidates, with and
+// without inference, against brute force.
+void test_peg_static_opp_inference(void) {
+  Config *config =
+      config_create_or_die("set -threads 2 -s1 equity -s2 equity -r1 best "
+                           "-r2 best");
+  load_and_exec_config_or_die(
+      config, "cgp 15/15/15/15/15/15/15/15/15/15/15/15/15/15/15 / 0/0 0 "
+              "-lex NWL23;");
+  Game *game = config_get_game(config);
+  MoveList *move_list = move_list_create(1);
+  MoveList *gen_ml = move_list_create(4096);
+  EndgameResults *results = endgame_results_create();
+  EndgameCtx *ctx = NULL;
+  InferencePosition pos;
+  const Move *only_moves[4];
+  int n_only_moves = 0;
+  double weighted[4];
+  double unweighted[4];
+  bool found = false;
+  uint64_t seed = 0;
+  while (!found) {
+    seed++;
+    assert(seed <= 200);
+    if (!setup_inference_position(game, seed, move_list, &pos)) {
+      continue;
+    }
+    // Candidates: the top three by static equity and the pass.
+    const MoveGenArgs gen_args = {
+        .game = game,
+        .move_list = gen_ml,
+        .move_record_type = MOVE_RECORD_ALL,
+        .move_sort_type = MOVE_SORT_EQUITY,
+        .override_kwg = NULL,
+        .eq_margin_movegen = 0,
+        .target_equity = EQUITY_MAX_VALUE,
+        .target_leave_size_for_exchange_cutoff = UNSET_LEAVE_SIZE,
+    };
+    generate_moves(&gen_args);
+    move_list_sort_moves(gen_ml);
+    n_only_moves = 0;
+    const Move *pass_move = NULL;
+    for (int move_idx = 0; move_idx < move_list_get_count(gen_ml); move_idx++) {
+      const Move *move = move_list_get_move(gen_ml, move_idx);
+      if (move_get_type(move) == GAME_EVENT_PASS) {
+        pass_move = move;
+      } else if (n_only_moves < 3) {
+        only_moves[n_only_moves++] = move;
+      }
+    }
+    assert(pass_move != NULL && n_only_moves == 3);
+    only_moves[n_only_moves++] = pass_move;
+    for (int cand_idx = 0; cand_idx < n_only_moves; cand_idx++) {
+      weighted[cand_idx] = inference_brute_force_win(
+          game, &pos, only_moves[cand_idx], true, move_list, &ctx, results);
+      unweighted[cand_idx] = inference_brute_force_win(
+          game, &pos, only_moves[cand_idx], false, move_list, &ctx, results);
+      found |= fabs(weighted[cand_idx] - unweighted[cand_idx]) > 1e-9;
+    }
+    if (!found) {
+      game_destroy(pos.prev_game);
+    }
+  }
+  int n_ruled_out = 0;
+  for (int bag_tile_idx = 0; bag_tile_idx < pos.n_unseen; bag_tile_idx++) {
+    n_ruled_out += pos.weights[bag_tile_idx] == 0;
+  }
+  printf("[peg_static_inference] seed %llu: leave size %d, %d of %d bag "
+         "tiles ruled out\n",
+         (unsigned long long)seed, pos.leave_size, n_ruled_out, pos.n_unseen);
+
+  const int exhaustive_counts[] = {INT_MAX};
+  for (int with_inference = 1; with_inference >= 0; with_inference--) {
+    PegArgs args;
+    memset(&args, 0, sizeof(args));
+    args.game = game;
+    args.thread_control = config_get_thread_control(config);
+    args.num_threads = 2;
+    args.stage_top_k = exhaustive_counts;
+    args.num_stages = 1;
+    args.opp_model = PEG_OPP_STATIC;
+    args.only_moves = only_moves;
+    args.n_only_moves = n_only_moves;
+    if (with_inference) {
+      args.inference_prev_game = pos.prev_game;
+      args.inference_prev_move = &pos.observed;
+    }
+    PegResult result;
+    memset(&result, 0, sizeof(result));
+    ErrorStack *error_stack = error_stack_create();
+    peg_solve(&args, &result, error_stack);
+    assert(error_stack_is_empty(error_stack));
+    assert(result.n_top_cands == n_only_moves);
+    for (int rank = 0; rank < result.n_top_cands; rank++) {
+      const PegRankedCand *cand = &result.top_cands[rank];
+      int cand_idx = 0;
+      while (compare_moves_without_equity(&cand->move, only_moves[cand_idx],
+                                          true) != -1) {
+        cand_idx++;
+        assert(cand_idx < n_only_moves);
+      }
+      const double expected =
+          with_inference ? weighted[cand_idx] : unweighted[cand_idx];
+      printf("[peg_static_inference] %s inference, cand %d: peg win=%.4f, "
+             "brute force win=%.4f\n",
+             with_inference ? "with" : "without", cand_idx, cand->win_pct,
+             expected);
+      assert(fabs(cand->win_pct - expected) < 1e-9);
+    }
+    peg_result_destroy(&result);
+    error_stack_destroy(error_stack);
+  }
+
+  endgame_ctx_destroy(ctx);
+  endgame_results_destroy(results);
+  move_list_destroy(gen_ml);
+  game_destroy(pos.prev_game);
+  move_list_destroy(move_list);
+  config_destroy(config);
+}
+
 // PEG_OPP_STATIC in exhaustive mode (a single full-depth stage) must match a
 // brute-force evaluation of win% against the static opponent for every
 // candidate, and so rank its best candidate at least as high as the static
@@ -2183,6 +2496,7 @@ void test_peg_static_opp_exact(void) {
 void test_peg(void) {
   log_set_level(LOG_FATAL);
   test_peg_static_opp_exact();
+  test_peg_static_opp_inference();
   test_peg_outcomes_string();
   test_peg_main_1bag_pass();
   test_peg_main_2bag_single();

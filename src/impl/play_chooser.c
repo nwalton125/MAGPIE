@@ -730,7 +730,8 @@ static bool play_chooser_run_peg(PlayChooser *play_chooser, const Game *game,
                 benchmarking ? play_chooser_benchmark_peg_candidate_done : NULL,
                 /*on_scenario_done=*/NULL,
                 /*user_data=*/benchmarking ? &benchmark_context : NULL,
-                /*poll=*/NULL, &peg_args);
+                /*poll=*/NULL, /*inference_prev_game=*/NULL,
+                /*inference_prev_move=*/NULL, &peg_args);
   PegResult peg_result = {0};
   peg_solve(&peg_args, &peg_result, error_stack);
   if (benchmarking) {

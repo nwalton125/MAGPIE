@@ -156,6 +156,7 @@ static TestEntry test_table[] = {
     {"pegpool", test_peg_pool},
     {"peg", test_peg},
     {"pegstatic", test_peg_static_opp_exact},
+    {"peginfer", test_peg_static_opp_inference},
     {"pegpessdraw", test_peg_pessfull_draw_regression},
     {"pegtopkall", test_peg_pegtopk_all},
     {"playchooser", test_play_chooser},

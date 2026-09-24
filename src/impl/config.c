@@ -3494,7 +3494,8 @@ void config_fill_peg_args(Config *config, PegArgs *peg_args) {
       /*protect_moves=*/NULL, /*n_protect_moves=*/0,
       /*include_per_scenario=*/config->peg_show_outcomes,
       /*on_stage_start=*/NULL, /*on_cand_done=*/NULL,
-      /*on_scenario_done=*/NULL, /*user_data=*/NULL, /*poll=*/NULL, peg_args);
+      /*on_scenario_done=*/NULL, /*user_data=*/NULL, /*poll=*/NULL,
+      /*inference_prev_game=*/NULL, /*inference_prev_move=*/NULL, peg_args);
 }
 
 // Parses a space-free UCGI PEG move list (coordinate.tiles, comma-separated)

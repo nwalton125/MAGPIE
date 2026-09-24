@@ -89,6 +89,9 @@ typedef struct PegNestFrame {
 // Per-worker scratch: a greedy-playout move list plus a reusable endgame
 // context/results pair. Indexed by the pool worker_idx (one extra slot for the
 // main thread when it helps drain the queue).
+// Defined with the inference code below.
+typedef struct PegInference PegInference;
+
 typedef struct PegWorker {
   MoveList *playout_ml;
   EndgameCtx *eg_ctx;
@@ -128,6 +131,9 @@ typedef struct PegWorker {
   // The static player's index under PEG_OPP_STATIC (the root mover's
   // opponent), or -1 under the other opponent models.
   int static_player_idx;
+  // Consistent leaves for the opponent's last move (NULL = no inference),
+  // shared by every worker; see PegArgs.inference_prev_game.
+  const PegInference *inference;
 } PegWorker;
 
 // The greedy seed does not use an endgame transposition table. Allocate one
@@ -545,6 +551,170 @@ static int peg_compute_unseen(const Game *game, int mover_idx,
   int total = 0;
   for (int ml = 0; ml < ld_size; ml++) {
     total += unseen[ml];
+  }
+  return total;
+}
+
+// ----- inference from the opponent's last move (PegArgs.inference_*) ---------
+
+// The leaves the opponent could have kept for a static player to play its last
+// move (see PegArgs.inference_prev_game), as sorted multiset keys. A key packs
+// a leave's letters in ascending order, one per byte, each stored as ml + 1 so
+// that the blank (ml 0) differs from padding.
+struct PegInference {
+  int leave_size;
+  uint64_t *leave_keys;
+  int n_leave_keys;
+};
+
+typedef struct PegInferenceBuild {
+  Game *scratch;        // the pre-move position; the opponent's rack is set
+  int opp_idx;          // per leave
+  const Move *observed; // the opponent's last move
+  const MachineLetter *used; // the move's rack tiles (blanks as the blank)
+  int n_used;
+  MoveList *move_list;
+  uint64_t *keys;
+  int n_keys;
+  int cap_keys;
+} PegInferenceBuild;
+
+static int peg_compare_u64(const void *a, const void *b) {
+  const uint64_t x = *(const uint64_t *)a;
+  const uint64_t y = *(const uint64_t *)b;
+  return (x > y) - (x < y);
+}
+
+// Recursively choose, per machine letter, how many of that letter the leave
+// holds (bounded by the unseen count); at each complete leave, check whether
+// the static player would have played the observed move from used + leave.
+static void peg_inference_enum_leaves(PegInferenceBuild *build,
+                                      const uint8_t *unseen, int ld_size,
+                                      int ml, int left, MachineLetter *leave,
+                                      int n_leave, uint64_t key) {
+  if (left == 0) {
+    Rack *rack =
+        player_get_rack(game_get_player(build->scratch, build->opp_idx));
+    rack_reset(rack);
+    for (int tile_idx = 0; tile_idx < build->n_used; tile_idx++) {
+      rack_add_letter(rack, build->used[tile_idx]);
+    }
+    for (int tile_idx = 0; tile_idx < n_leave; tile_idx++) {
+      rack_add_letter(rack, leave[tile_idx]);
+    }
+    const Move *top = get_top_equity_move(build->scratch, build->move_list);
+    if (compare_moves_without_equity(top, build->observed, true) == -1) {
+      if (build->n_keys == build->cap_keys) {
+        build->cap_keys = build->cap_keys > 0 ? build->cap_keys * 2 : 64;
+        build->keys = realloc_or_die(build->keys, sizeof(uint64_t) *
+                                                      (size_t)build->cap_keys);
+      }
+      build->keys[build->n_keys++] = key;
+    }
+    return;
+  }
+  if (ml == ld_size) {
+    return;
+  }
+  const int max_count = unseen[ml] < left ? unseen[ml] : left;
+  for (int count = max_count; count >= 0; count--) {
+    uint64_t next_key = key;
+    for (int tile_idx = 0; tile_idx < count; tile_idx++) {
+      leave[n_leave + tile_idx] = (MachineLetter)ml;
+      next_key |= (uint64_t)(ml + 1) << (8 * (n_leave + tile_idx));
+    }
+    peg_inference_enum_leaves(build, unseen, ld_size, ml + 1, left - count,
+                              leave, n_leave + count, next_key);
+  }
+}
+
+// Builds the consistent-leave table for the opponent's last move, given the
+// mover's current unseen tiles (the opponent's current rack plus the bag,
+// which contain the leave). Returns NULL when inference is off or no leave is
+// consistent.
+static PegInference *peg_inference_create(const PegArgs *args,
+                                          const uint8_t *unseen, int ld_size,
+                                          int mover_idx) {
+  if (args->inference_prev_game == NULL || args->inference_prev_move == NULL ||
+      args->opp_model != PEG_OPP_STATIC) {
+    return NULL;
+  }
+  const Move *observed = args->inference_prev_move;
+  const int opp_idx = 1 - mover_idx;
+  MachineLetter used[RACK_SIZE];
+  int n_used = 0;
+  if (move_get_type(observed) != GAME_EVENT_PASS) {
+    for (int tile_idx = 0; tile_idx < move_get_tiles_length(observed);
+         tile_idx++) {
+      const MachineLetter tile = move_get_tile(observed, tile_idx);
+      if (tile == PLAYED_THROUGH_MARKER) {
+        continue;
+      }
+      used[n_used++] = get_is_blanked(tile) ? BLANK_MACHINE_LETTER : tile;
+    }
+  }
+  const int leave_size = RACK_SIZE - n_used;
+  PegInferenceBuild build = {0};
+  build.scratch = game_duplicate(args->inference_prev_game);
+  build.opp_idx = opp_idx;
+  build.observed = observed;
+  build.used = used;
+  build.n_used = n_used;
+  build.move_list = move_list_create(1);
+  MachineLetter leave[RACK_SIZE];
+  peg_inference_enum_leaves(&build, unseen, ld_size, 0, leave_size, leave, 0,
+                            0);
+  game_destroy(build.scratch);
+  move_list_destroy(build.move_list);
+  if (build.n_keys == 0) {
+    free(build.keys);
+    return NULL;
+  }
+  qsort(build.keys, (size_t)build.n_keys, sizeof(uint64_t), peg_compare_u64);
+  PegInference *inference = malloc_or_die(sizeof(PegInference));
+  inference->leave_size = leave_size;
+  inference->leave_keys = build.keys;
+  inference->n_leave_keys = build.n_keys;
+  return inference;
+}
+
+static void peg_inference_destroy(PegInference *inference) {
+  if (inference == NULL) {
+    return;
+  }
+  free(inference->leave_keys);
+  free(inference);
+}
+
+// Counts the labeled leave_size-subsets of a rack (per-letter counts) that are
+// consistent leaves: a leave with c of a letter the rack holds n of stands for
+// binomial(n, c) labeled subsets.
+static int64_t peg_inference_count(const PegInference *inference,
+                                   const uint8_t *rack_counts, int ld_size,
+                                   int ml, int left, int n_leave,
+                                   uint64_t key) {
+  if (left == 0) {
+    const bool found =
+        bsearch(&key, inference->leave_keys, (size_t)inference->n_leave_keys,
+                sizeof(uint64_t), peg_compare_u64) != NULL;
+    return found ? 1 : 0;
+  }
+  if (ml == ld_size) {
+    return 0;
+  }
+  int64_t total = 0;
+  const int max_count = rack_counts[ml] < left ? rack_counts[ml] : left;
+  for (int count = 0; count <= max_count; count++) {
+    uint64_t next_key = key;
+    for (int tile_idx = 0; tile_idx < count; tile_idx++) {
+      next_key |= (uint64_t)(ml + 1) << (8 * (n_leave + tile_idx));
+    }
+    const int64_t sub =
+        peg_inference_count(inference, rack_counts, ld_size, ml + 1,
+                            left - count, n_leave + count, next_key);
+    if (sub > 0) {
+      total += sub * peg_binomial(rack_counts[ml], count);
+    }
   }
   return total;
 }
@@ -1955,6 +2125,31 @@ static void peg_enum_splits(PegEvalCtx *ctx, int ml, int mover_left,
       for (int factor = 2; factor <= ctx->k_drawn; factor++) {
         full_weight *= factor;
       }
+      // Inference: weight by the opponent rack's consistent leaves, and skip
+      // a scenario the opponent's last move rules out.
+      const PegWorker *any_worker =
+          ctx->worker != NULL ? ctx->worker : ctx->workers;
+      const PegInference *inference =
+          any_worker != NULL ? any_worker->inference : NULL;
+      if (inference != NULL) {
+        uint8_t opp_counts[MAX_ALPHABET_SIZE];
+        for (int letter = 0; letter < ctx->ld_size; letter++) {
+          opp_counts[letter] = ctx->unseen[letter];
+        }
+        for (int tile_idx = 0; tile_idx < n_mover; tile_idx++) {
+          opp_counts[mover_drawn[tile_idx]]--;
+        }
+        for (int tile_idx = 0; tile_idx < n_bag_rem; tile_idx++) {
+          opp_counts[bag_remaining[tile_idx]]--;
+        }
+        const int64_t consistent =
+            peg_inference_count(inference, opp_counts, ctx->ld_size, 0,
+                                inference->leave_size, 0, 0);
+        if (consistent == 0) {
+          return;
+        }
+        full_weight *= consistent;
+      }
       // Weight-stratified sampling: this split covers the weight band
       // [seen, seen + full_weight); keep it only if a stride boundary falls
       // inside, and reweight by (boundaries x stride) so the expected aggregate
@@ -2855,6 +3050,8 @@ void peg_solve(const PegArgs *args, PegResult *out, ErrorStack *error_stack) {
   }
   // One prune cache shared by every worker (cross-worker board reuse).
   PegPruneCache *prune_cache = peg_prune_cache_create();
+  PegInference *inference =
+      peg_inference_create(args, unseen, ld_size, mover_idx);
   PegWorker *workers = malloc_or_die((size_t)n_scratch * sizeof(PegWorker));
   for (int worker_idx = 0; worker_idx < n_scratch; worker_idx++) {
     workers[worker_idx].playout_ml = move_list_create(1);
@@ -2890,6 +3087,7 @@ void peg_solve(const PegArgs *args, PegResult *out, ErrorStack *error_stack) {
         args->opp_model == PEG_OPP_STATIC
             ? 1 - game_get_player_on_turn_index(args->game)
             : -1;
+    workers[worker_idx].inference = inference;
     workers[worker_idx].nest_free = NULL;
     workers[worker_idx].nest_all = NULL;
   }
@@ -3393,6 +3591,7 @@ void peg_solve(const PegArgs *args, PegResult *out, ErrorStack *error_stack) {
     transposition_table_destroy(workers[worker_idx].eg_tt);
   }
   free(workers);
+  peg_inference_destroy(inference);
   // Safe now that every worker's scratch game (which referenced cached KWGs via
   // its override pointer) has been destroyed.
   peg_prune_cache_destroy(prune_cache);

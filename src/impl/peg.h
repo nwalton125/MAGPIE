@@ -270,6 +270,19 @@ typedef struct PegArgs {
   // a separate thread (e.g. a TUI render loop) can read the current ranking
   // concurrently via peg_poll_read. The caller owns the PegPoll.
   PegPoll *poll;
+
+  // Inference from the opponent's last move, under PEG_OPP_STATIC only. When
+  // inference_prev_game is non-NULL, it is the position the opponent's last
+  // move, inference_prev_move, was played from, with the opponent on turn (its
+  // rack there is ignored). The opponent kept a leave from that rack; a leave
+  // is consistent if a static player holding the move's tiles plus that leave
+  // would have played exactly inference_prev_move (tiebreaks included). Each
+  // scenario's weight is then multiplied by the number of consistent leaves
+  // among the opponent rack's (labeled) subsets of that size, so scenarios the
+  // move rules out are skipped. Only the root decision uses it; lookahead
+  // turns are not refined. Ignored if no leave is consistent.
+  const Game *inference_prev_game;
+  const Move *inference_prev_move;
 } PegArgs;
 
 // Fills every PegArgs field from an explicit argument, so that adding a field
@@ -293,7 +306,8 @@ peg_args_fill(const Game *game, ThreadControl *thread_control,
               const Move *const *protect_moves, const int n_protect_moves,
               const bool include_per_scenario, PegOnStageStart on_stage_start,
               PegOnCandDone on_cand_done, PegOnScenarioDone on_scenario_done,
-              void *user_data, PegPoll *poll, PegArgs *peg_args) {
+              void *user_data, PegPoll *poll, const Game *inference_prev_game,
+              const Move *inference_prev_move, PegArgs *peg_args) {
   peg_args->game = game;
   peg_args->thread_control = thread_control;
   peg_args->num_threads = num_threads;
@@ -324,6 +338,8 @@ peg_args_fill(const Game *game, ThreadControl *thread_control,
   peg_args->on_scenario_done = on_scenario_done;
   peg_args->user_data = user_data;
   peg_args->poll = poll;
+  peg_args->inference_prev_game = inference_prev_game;
+  peg_args->inference_prev_move = inference_prev_move;
 }
 
 // ----- Stage progress snapshot ------------------------------------------
