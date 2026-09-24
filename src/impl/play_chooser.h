@@ -49,7 +49,8 @@ typedef struct PlayChooserStrategy {
   // budget allows.
   int endgame_plies;
   // If true, the endgame solver assumes the opponent always plays its top
-  // static equity move (EndgameArgs.opponent_static).
+  // static equity move (EndgameArgs.opponent_static), and the pre-endgame
+  // solver models it the same way (PEG_OPP_STATIC).
   bool endgame_opponent_static;
   // If true, the endgame solver stops at the first line that proves a win
   // (EndgameArgs.first_win), so it picks a winning move without maximizing

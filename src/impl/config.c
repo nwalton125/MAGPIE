@@ -1691,8 +1691,9 @@ void add_help_arg_to_string_builder(const Config *config, int token,
       examples[1] = "false";
       text = "Specifies whether the endgame solver assumes the opponent always "
              "plays its top static equity move instead of searching all of "
-             "the opponent's moves. Also applies to the endgames of autoplay "
-             "players that use the play chooser.";
+             "the opponent's moves. The pre-endgame solver (peg) then also "
+             "models the opponent as a static player. Also applies to "
+             "autoplay players that use the play chooser.";
       break;
     case ARG_TOKEN_ENDGAME_FIRST_WIN:
       usages[0] = "<true_or_false>";
@@ -3454,6 +3455,17 @@ static void config_load_peg_stage_top_k(Config *config,
 // sharpen the non-emptier leaf decision without paying for a wide inner field.
 static const int PEG_NESTED_DEFAULT_CAND_CAPS[] = {8, 4, 2};
 
+// -estatic makes the pre-endgame solver model the opponent as static too.
+static PegOppModel config_get_peg_opp_model(const Config *config) {
+  if (config->endgame_opponent_static) {
+    return PEG_OPP_STATIC;
+  }
+  if (config->peg_pessimistic) {
+    return PEG_OPP_PESSIMISTIC;
+  }
+  return PEG_OPP_RATIONAL;
+}
+
 void config_fill_peg_args(Config *config, PegArgs *peg_args) {
   // Nested inner-peg lookahead for non-emptier leaves is on by default at depth
   // 1 with the default inner stage schedule and the bag-size default scenario
@@ -3471,8 +3483,8 @@ void config_fill_peg_args(Config *config, PegArgs *peg_args) {
       /*stage_top_k=*/
       config->peg_num_stages > 0 ? config->peg_stage_top_k : NULL,
       config->peg_num_stages, /*inner_top_k=*/0,
-      config->peg_pessimistic ? PEG_OPP_PESSIMISTIC : PEG_OPP_RATIONAL,
-      config->peg_scenario_stride, /*nested_enabled=*/config->peg_nested,
+      config_get_peg_opp_model(config), config->peg_scenario_stride,
+      /*nested_enabled=*/config->peg_nested,
       /*nested_cand_cap=*/0, PEG_NESTED_DEFAULT_CAND_CAPS,
       (int)(sizeof(PEG_NESTED_DEFAULT_CAND_CAPS) /
             sizeof(PEG_NESTED_DEFAULT_CAND_CAPS[0])),

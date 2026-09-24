@@ -67,9 +67,27 @@
 //                         mover's result (worst-case / guaranteed-win
 //                         analysis). The mover's spread under this model is
 //                         always <= the rational model's.
+//   PEG_OPP_STATIC      — the opponent is a static player: on every one of its
+//                         turns, in every scenario, it plays its top static
+//                         equity move (get_top_equity_move). Unlike the other
+//                         models this also changes emptier scenarios: the
+//                         opponent plays its static move and the mover then
+//                         solves the rest with the static-opponent endgame
+//                         solver (EndgameArgs.opponent_static). With
+//                         nested_enabled, the mover's later pre-endgame turns
+//                         are re-solved over the scenarios it can't tell apart;
+//                         otherwise they are a playout in which the mover
+//                         plays greedily. Its endgames are solved win-only
+//                         (first_win): a static-opponent spread solve can
+//                         barely prune, since the opponent never chooses, but
+//                         win/draw/loss is fast. So win% is exact, but a
+//                         scenario's spread is only a bound on the true spread
+//                         (at least +1 for a win, at most -1 for a loss), and
+//                         mean_spread only breaks ties loosely.
 typedef enum {
   PEG_OPP_RATIONAL = 0,
   PEG_OPP_PESSIMISTIC,
+  PEG_OPP_STATIC,
 } PegOppModel;
 
 // ----- Progress callbacks -----------------------------------------------

@@ -125,6 +125,9 @@ typedef struct PegWorker {
   // released frames; nest_all chains every allocated frame for teardown.
   PegNestFrame *nest_free;
   PegNestFrame *nest_all;
+  // The static player's index under PEG_OPP_STATIC (the root mover's
+  // opponent), or -1 under the other opponent models.
+  int static_player_idx;
 } PegWorker;
 
 // The greedy seed does not use an endgame transposition table. Allocate one
@@ -678,8 +681,12 @@ static bool peg_should_stop(int64_t deadline_ns,
 // usual rack-leave adjustment when the game has not actually ended. A timed
 // playout checks between plies so an in-flight PEG scenario can wind down at
 // the same absolute deadline as the surrounding stage.
+// static_player_idx is the static player under PEG_OPP_STATIC (-1 otherwise):
+// it always plays its top static equity move, while other players play by
+// score once the bag is empty.
 static int32_t peg_greedy_playout(Game *game, int mover_idx,
-                                  MoveList *playout_ml, int64_t deadline_ns,
+                                  int static_player_idx, MoveList *playout_ml,
+                                  int64_t deadline_ns,
                                   ThreadControl *thread_control,
                                   bool *interrupted) {
   const LetterDistribution *ld = game_get_ld(game);
@@ -694,10 +701,13 @@ static int32_t peg_greedy_playout(Game *game, int mover_idx,
       break;
     }
     const bool bag_has_tiles = bag_get_letters(game_get_bag(game)) > 0;
+    const bool static_turn =
+        game_get_player_on_turn_index(game) == static_player_idx;
     const MoveGenArgs args = {
         .game = game,
         .move_record_type = MOVE_RECORD_BEST,
-        .move_sort_type = bag_has_tiles ? MOVE_SORT_EQUITY : MOVE_SORT_SCORE,
+        .move_sort_type =
+            bag_has_tiles || static_turn ? MOVE_SORT_EQUITY : MOVE_SORT_SCORE,
         .override_kwg = NULL,
         .eq_margin_movegen = 0,
         .target_equity = EQUITY_MAX_VALUE,
@@ -726,6 +736,25 @@ static int32_t peg_greedy_playout(Game *game, int mover_idx,
     spread += equity_to_int(rack_get_score(ld, player_get_rack(op)));
   }
   return spread;
+}
+
+// Under PEG_OPP_STATIC, plays the static player's top static equity move for
+// as long as it is on turn (in practice a single move), so that the game is
+// either over or the other player is on turn. No-op when static_player_idx is
+// -1.
+static void peg_play_static_turns(Game *game, int static_player_idx,
+                                  MoveList *move_list) {
+  while (static_player_idx >= 0 &&
+         game_get_game_end_reason(game) == GAME_END_REASON_NONE &&
+         game_get_player_on_turn_index(game) == static_player_idx) {
+    play_move(get_top_equity_move(game, move_list), game, NULL);
+  }
+}
+
+// Final spread from player_idx's perspective of a finished game.
+static int32_t peg_final_spread(const Game *game, int player_idx) {
+  return equity_to_int(player_get_score(game_get_player(game, player_idx)) -
+                       player_get_score(game_get_player(game, 1 - player_idx)));
 }
 
 // Pessimistic playout: the mover plays greedily, but at each opponent turn the
@@ -832,9 +861,9 @@ static int32_t peg_pessimistic_playout(Game *game, int mover_idx,
       }
       game_copy(branch, game);
       play_move(move_list_get_move(opp_ml, i), branch, NULL);
-      const int32_t mover_net =
-          peg_greedy_playout(branch, mover_idx, rollout_ml, deadline_ns,
-                             thread_control, interrupted);
+      const int32_t mover_net = peg_greedy_playout(
+          branch, mover_idx, /*static_player_idx=*/-1, rollout_ml, deadline_ns,
+          thread_control, interrupted);
       if (interrupted != NULL && *interrupted) {
         break;
       }
@@ -1161,9 +1190,9 @@ static int32_t peg_nested_floor(PegWorker *worker, const Game *game,
   } else {
     game_copy(frame->game, game);
   }
-  const int32_t value =
-      peg_greedy_playout(frame->game, on_turn, worker->playout_ml, deadline_ns,
-                         worker->thread_control, /*interrupted=*/NULL);
+  const int32_t value = peg_greedy_playout(
+      frame->game, on_turn, worker->static_player_idx, worker->playout_ml,
+      deadline_ns, worker->thread_control, /*interrupted=*/NULL);
   peg_nest_release(worker, frame);
   return value;
 }
@@ -1202,14 +1231,20 @@ static int32_t peg_nested_endgame_value(PegWorker *worker, Game *game,
       /*hard_time_limit=*/0.0, PEG_ENDGAME_SEED, /*skip_word_pruning=*/true,
       peg_worker_get_endgame_tt(worker),
       // nested endgames are small and many; no core injection
-      /*max_workers=*/0, /*first_win=*/false, /*first_win_fallback_moves=*/0,
+      // Under PEG_OPP_STATIC the leaf is solved win-only: a static-opponent
+      // spread solve can barely prune (the opponent never chooses), while the
+      // win/draw/loss that win% needs is fast (see PEG_OPP_STATIC).
+      /*max_workers=*/0,
+      /*first_win=*/worker->static_player_idx >= 0,
+      /*first_win_fallback_moves=*/0,
       /*use_initial_window=*/false, /*initial_alpha=*/0, /*initial_beta=*/0,
       deadline_ns, /*actual_move=*/NULL,
-      /*opponent_static=*/false, &ea);
+      /*opponent_static=*/worker->static_player_idx >= 0, &ea);
   endgame_results_reset(worker->eg_results);
   endgame_solve_inline(&worker->eg_ctx, &ea, worker->eg_results);
   if (endgame_results_get_depth(worker->eg_results, ENDGAME_RESULT_BEST) < 0) {
-    return peg_greedy_playout(game, on_turn, worker->playout_ml, deadline_ns,
+    return peg_greedy_playout(game, on_turn, worker->static_player_idx,
+                              worker->playout_ml, deadline_ns,
                               worker->thread_control,
                               /*interrupted=*/NULL);
   }
@@ -1462,6 +1497,15 @@ static int32_t peg_inner_leaf(PegWorker *worker, Game *game, int stage_fidelity,
                               int depth, int outer_fidelity,
                               int64_t deadline_ns) {
   const int on_turn = game_get_player_on_turn_index(game);
+  if (on_turn == worker->static_player_idx &&
+      game_get_game_end_reason(game) == GAME_END_REASON_NONE) {
+    // The static player's move is fixed by its rack in this scenario: play it,
+    // score the rest from the other player's turn, and flip the sign back to
+    // this on-turn perspective.
+    peg_play_static_turns(game, worker->static_player_idx, worker->playout_ml);
+    return -peg_inner_leaf(worker, game, stage_fidelity, depth, outer_fidelity,
+                           deadline_ns);
+  }
   if (game_get_game_end_reason(game) != GAME_END_REASON_NONE) {
     const Player *me = game_get_player(game, on_turn);
     const Player *op = game_get_player(game, 1 - on_turn);
@@ -1613,6 +1657,17 @@ static int32_t peg_eval_leaf(PegEvalCtx *ctx, Game *game) {
   if (peg_eval_should_stop(ctx)) {
     return 0;
   }
+  // PEG_OPP_STATIC: the static opponent's reply is fixed by its rack in this
+  // scenario, so play it first; the mover is then on turn, and the leaf is
+  // scored below from there (an exact static-opponent endgame if the bag is
+  // now empty). Stage 0's greedy playout plays the static turns itself.
+  const int static_player_idx = ctx->worker->static_player_idx;
+  if (static_player_idx >= 0 && ctx->fidelity_plies > 0) {
+    peg_play_static_turns(game, static_player_idx, ctx->worker->playout_ml);
+    if (game_get_game_end_reason(game) != GAME_END_REASON_NONE) {
+      return peg_final_spread(game, ctx->mover_idx);
+    }
+  }
   const bool emptier = bag_get_letters(game_get_bag(game)) == 0 &&
                        game_get_game_end_reason(game) == GAME_END_REASON_NONE;
   if (ctx->fidelity_plies <= 0 || !emptier) {
@@ -1639,9 +1694,10 @@ static int32_t peg_eval_leaf(PegEvalCtx *ctx, Game *game) {
           game, ctx->mover_idx, ctx->worker->playout_ml, ctx->inner_top_k,
           ctx->deadline_ns, ctx->thread_control, &ctx->interrupted);
     }
-    return peg_greedy_playout(game, ctx->mover_idx, ctx->worker->playout_ml,
-                              ctx->deadline_ns, ctx->thread_control,
-                              &ctx->interrupted);
+    return peg_greedy_playout(game, ctx->mover_idx,
+                              ctx->worker->static_player_idx,
+                              ctx->worker->playout_ml, ctx->deadline_ns,
+                              ctx->thread_control, &ctx->interrupted);
   }
   // Exact endgame leaf. After the mover plays and draws it is the opponent's
   // turn, so the solved value is from the on-turn player's perspective; fold
@@ -1683,10 +1739,12 @@ static int32_t peg_eval_leaf(PegEvalCtx *ctx, Game *game) {
       peg_worker_get_endgame_tt(ctx->worker),
       // > num_threads (1) opens the injection window so the monitor can lend
       // idle cores to this (potentially long) endgame mid-solve.
-      /*max_workers=*/ctx->injection_cap, /*first_win=*/false,
+      // Win-only under PEG_OPP_STATIC; see peg_nested_endgame_value.
+      /*max_workers=*/ctx->injection_cap,
+      /*first_win=*/static_player_idx >= 0,
       /*first_win_fallback_moves=*/0, /*use_initial_window=*/false,
       /*initial_alpha=*/0, /*initial_beta=*/0, ctx->deadline_ns,
-      /*actual_move=*/NULL, /*opponent_static=*/false, &ea);
+      /*actual_move=*/NULL, /*opponent_static=*/static_player_idx >= 0, &ea);
   endgame_results_reset(ctx->worker->eg_results);
   endgame_solve_inline(&ctx->worker->eg_ctx, &ea, ctx->worker->eg_results);
   // If the solver was interrupted before completing any search depth (depth
@@ -1694,9 +1752,10 @@ static int32_t peg_eval_leaf(PegEvalCtx *ctx, Game *game) {
   // solve. Fall back to greedy rather than misreporting the scenario outcome.
   if (endgame_results_get_depth(ctx->worker->eg_results, ENDGAME_RESULT_BEST) <
       0) {
-    return peg_greedy_playout(game, ctx->mover_idx, ctx->worker->playout_ml,
-                              ctx->deadline_ns, ctx->thread_control,
-                              &ctx->interrupted);
+    return peg_greedy_playout(game, ctx->mover_idx,
+                              ctx->worker->static_player_idx,
+                              ctx->worker->playout_ml, ctx->deadline_ns,
+                              ctx->thread_control, &ctx->interrupted);
   }
   const int eg_val =
       endgame_results_get_value(ctx->worker->eg_results, ENDGAME_RESULT_BEST);
@@ -2827,6 +2886,10 @@ void peg_solve(const PegArgs *args, PegResult *out, ErrorStack *error_stack) {
     workers[worker_idx].nested_stride = args->nested_stride;
     workers[worker_idx].nested_emptier_ply_cap = args->nested_emptier_ply_cap;
     workers[worker_idx].nested_max_depth = args->nested_max_depth;
+    workers[worker_idx].static_player_idx =
+        args->opp_model == PEG_OPP_STATIC
+            ? 1 - game_get_player_on_turn_index(args->game)
+            : -1;
     workers[worker_idx].nest_free = NULL;
     workers[worker_idx].nest_all = NULL;
   }

@@ -6,6 +6,7 @@
 // in peg_pess_test / benchmark_peg_test). Each drives the public peg_solve API
 // on a known position via PegArgs.only_moves so the cost is one candidate.
 void test_peg(void);
+void test_peg_static_opp_exact(void);
 
 // On-demand deep anchors (test.c keys peg1pb / peg1onyx / peg2axe / peg2acid /
 // peg3pah / peg4pond): full-position production peg_solve runs on studied

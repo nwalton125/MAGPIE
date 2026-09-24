@@ -2,12 +2,16 @@
 
 #include "../src/compat/ctime.h"
 #include "../src/def/equity_defs.h"
+#include "../src/def/game_defs.h"
 #include "../src/def/game_history_defs.h"
 #include "../src/def/letter_distribution_defs.h"
 #include "../src/def/move_defs.h"
+#include "../src/def/rack_defs.h"
 #include "../src/def/thread_control_defs.h"
 #include "../src/ent/bag.h"
 #include "../src/ent/board.h"
+#include "../src/ent/endgame_results.h"
+#include "../src/ent/equity.h"
 #include "../src/ent/game.h"
 #include "../src/ent/letter_distribution.h"
 #include "../src/ent/move.h"
@@ -16,6 +20,8 @@
 #include "../src/ent/thread_control.h"
 #include "../src/ent/validated_move.h"
 #include "../src/impl/config.h"
+#include "../src/impl/endgame.h"
+#include "../src/impl/gameplay.h"
 #include "../src/impl/move_gen.h"
 #include "../src/impl/peg.h"
 #include "../src/str/move_string.h"
@@ -24,6 +30,8 @@
 #include "../src/util/string_util.h"
 #include "test_util.h"
 #include <assert.h>
+#include <limits.h>
+#include <math.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -2000,8 +2008,181 @@ static void test_peg_outcomes_string(void) {
   assert_outcomes_eq(tie_majority, 5, "W: A, L: B, otherwise ties");
 }
 
+// Exact value of `cand` in a 1-in-bag position against a static opponent,
+// computed independently of peg_solve: for each unseen tile instance that
+// could be the bag tile, play the candidate, then the opponent's top static
+// equity move, then solve the rest win-only with the static-opponent endgame
+// solver. Returns the mover's win% (draws count half).
+static double static_opp_brute_force_1bag_win(const Game *game,
+                                              const Move *cand) {
+  const int mover_idx = game_get_player_on_turn_index(game);
+  const int opp_idx = 1 - mover_idx;
+  assert(bag_get_letters(game_get_bag(game)) == 1);
+  // Unseen from the mover's side: the bag tile plus the opponent's rack.
+  MachineLetter unseen[RACK_SIZE + 1];
+  int n_unseen = bag_peek_tiles(game_get_bag(game), unseen);
+  const Rack *opp_rack = player_get_rack(game_get_player(game, opp_idx));
+  const int ld_size = ld_get_size(game_get_ld(game));
+  for (int ml = 0; ml < ld_size; ml++) {
+    for (int count = rack_get_letter(opp_rack, ml); count > 0; count--) {
+      unseen[n_unseen++] = (MachineLetter)ml;
+    }
+  }
+  MoveList *move_list = move_list_create(1);
+  EndgameResults *results = endgame_results_create();
+  EndgameCtx *ctx = NULL;
+  double wins = 0.0;
+  for (int bag_tile_idx = 0; bag_tile_idx < n_unseen; bag_tile_idx++) {
+    Game *scenario = game_duplicate(game);
+    Rack *scenario_opp = player_get_rack(game_get_player(scenario, opp_idx));
+    rack_reset(scenario_opp);
+    for (int tile_idx = 0; tile_idx < n_unseen; tile_idx++) {
+      if (tile_idx != bag_tile_idx) {
+        rack_add_letter(scenario_opp, unseen[tile_idx]);
+      }
+    }
+    bag_set_to_tiles(game_get_bag(scenario), &unseen[bag_tile_idx], 1);
+    play_move(cand, scenario, NULL);
+    while (game_get_game_end_reason(scenario) == GAME_END_REASON_NONE &&
+           game_get_player_on_turn_index(scenario) == opp_idx) {
+      play_move(get_top_equity_move(scenario, move_list), scenario, NULL);
+    }
+    int32_t final_spread =
+        equity_to_int(player_get_score(game_get_player(scenario, mover_idx)) -
+                      player_get_score(game_get_player(scenario, opp_idx)));
+    if (game_get_game_end_reason(scenario) == GAME_END_REASON_NONE) {
+      assert(bag_is_empty(game_get_bag(scenario)));
+      ThreadControl *thread_control = thread_control_create();
+      thread_control_set_status(thread_control, THREAD_CONTROL_STATUS_STARTED);
+      EndgameArgs args = {0};
+      args.thread_control = thread_control;
+      args.game = scenario;
+      args.plies = MAX_VARIANT_LENGTH;
+      args.tt_fraction_of_mem = 0.05;
+      args.initial_small_move_arena_size =
+          DEFAULT_INITIAL_SMALL_MOVE_ARENA_SIZE;
+      args.num_threads = 1;
+      args.num_top_moves = 1;
+      args.seed = 42;
+      args.opponent_static = true;
+      args.first_win = true;
+      ErrorStack *error_stack = error_stack_create();
+      endgame_results_reset(results);
+      endgame_solve(&ctx, &args, results, error_stack);
+      assert(error_stack_is_empty(error_stack));
+      final_spread += endgame_results_get_value(results, ENDGAME_RESULT_BEST);
+      error_stack_destroy(error_stack);
+      thread_control_destroy(thread_control);
+    }
+    if (final_spread > 0) {
+      wins += 1.0;
+    } else if (final_spread == 0) {
+      wins += 0.5;
+    }
+    game_destroy(scenario);
+  }
+  endgame_ctx_destroy(ctx);
+  endgame_results_destroy(results);
+  move_list_destroy(move_list);
+  return wins / n_unseen;
+}
+
+// PEG_OPP_STATIC in exhaustive mode (a single full-depth stage) must match a
+// brute-force evaluation of win% against the static opponent for every
+// candidate, and so rank its best candidate at least as high as the static
+// player's own move.
+void test_peg_static_opp_exact(void) {
+  Config *config = config_create_or_die("set -threads 2 -s1 equity -s2 equity");
+  load_and_exec_config_or_die(
+      config,
+      "cgp 15/3Q7U3/3U2TAURINE2/1CHANSONS2W3/2AI6JO3/DIRL1PO3IN3/E1D2EF3V4/"
+      "F1I2p1TRAIK3/O1L2T4E4/ABy1PIT2BRIG2/ME1MOZELLE5/1GRADE1O1NOH3/"
+      "WE3R1V7/AT5E7/G6D7 ENOSTXY/ACEISUY 356/378 0 -lex NWL20");
+  Game *game = config_get_game(config);
+  // Exhaustive solves of every move are slow, so compare a few candidates:
+  // the top three by static equity (the first is the static player's own
+  // move) and the pass.
+  MoveList *gen_ml = move_list_create(4096);
+  const MoveGenArgs gen_args = {
+      .game = game,
+      .move_list = gen_ml,
+      .move_record_type = MOVE_RECORD_ALL,
+      .move_sort_type = MOVE_SORT_EQUITY,
+      .override_kwg = NULL,
+      .eq_margin_movegen = 0,
+      .target_equity = EQUITY_MAX_VALUE,
+      .target_leave_size_for_exchange_cutoff = UNSET_LEAVE_SIZE,
+  };
+  generate_moves(&gen_args);
+  move_list_sort_moves(gen_ml);
+  const Move *only_moves[4];
+  int n_only_moves = 0;
+  const Move *pass_move = NULL;
+  for (int move_idx = 0; move_idx < move_list_get_count(gen_ml); move_idx++) {
+    const Move *move = move_list_get_move(gen_ml, move_idx);
+    if (move_get_type(move) == GAME_EVENT_PASS) {
+      pass_move = move;
+    } else if (n_only_moves < 3) {
+      only_moves[n_only_moves++] = move;
+    }
+  }
+  assert(pass_move != NULL && n_only_moves == 3);
+  only_moves[n_only_moves++] = pass_move;
+  const int exhaustive_counts[] = {INT_MAX};
+  PegArgs args;
+  memset(&args, 0, sizeof(args));
+  args.game = game;
+  args.thread_control = config_get_thread_control(config);
+  args.num_threads = 2;
+  args.stage_top_k = exhaustive_counts;
+  args.num_stages = 1;
+  args.opp_model = PEG_OPP_STATIC;
+  args.only_moves = only_moves;
+  args.n_only_moves = n_only_moves;
+  PegResult result;
+  memset(&result, 0, sizeof(result));
+  ErrorStack *error_stack = error_stack_create();
+  Timer timer;
+  ctimer_start(&timer);
+  peg_solve(&args, &result, error_stack);
+  printf("[peg_static_opp] peg_solve: %.2fs\n", ctimer_elapsed_seconds(&timer));
+  (void)fflush(stdout);
+  assert(error_stack_is_empty(error_stack));
+  assert(result.n_top_cands == n_only_moves);
+  const int n_checked = result.n_top_cands;
+  for (int cand_idx = 0; cand_idx < n_checked; cand_idx++) {
+    const PegRankedCand *cand = &result.top_cands[cand_idx];
+    ctimer_start(&timer);
+    const double win = static_opp_brute_force_1bag_win(game, &cand->move);
+    printf("[peg_static_opp] cand %d: peg win=%.4f, brute force win=%.4f "
+           "(%.2fs)\n",
+           cand_idx, cand->win_pct, win, ctimer_elapsed_seconds(&timer));
+    assert(fabs(cand->win_pct - win) < 1e-9);
+  }
+  // The static player's own move is a candidate, so the best candidate's
+  // win% is at least the static move's.
+  MoveList *move_list = move_list_create(1);
+  const Move *static_move = get_top_equity_move(game, move_list);
+  assert(compare_moves_without_equity(static_move, only_moves[0], true) == -1);
+  for (int cand_idx = 0; cand_idx < result.n_top_cands; cand_idx++) {
+    const PegRankedCand *cand = &result.top_cands[cand_idx];
+    if (compare_moves_without_equity(&cand->move, static_move, true) == -1) {
+      printf("[peg_static_opp] static move win=%.4f, best win=%.4f\n",
+             cand->win_pct, result.top_cands[0].win_pct);
+      assert(result.top_cands[0].win_pct >= cand->win_pct);
+    }
+  }
+
+  move_list_destroy(move_list);
+  move_list_destroy(gen_ml);
+  peg_result_destroy(&result);
+  error_stack_destroy(error_stack);
+  config_destroy(config);
+}
+
 void test_peg(void) {
   log_set_level(LOG_FATAL);
+  test_peg_static_opp_exact();
   test_peg_outcomes_string();
   test_peg_main_1bag_pass();
   test_peg_main_2bag_single();
