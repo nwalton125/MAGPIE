@@ -414,6 +414,9 @@ magpie_pgo_train: $(OBJ_SRC) $(PGO_TRAIN_OBJ) | $(BIN_DIR)
 word_frequencies: $(OBJ_SRC) $(OBJ_DIR)/$(TOOLS_DIR)/word_frequencies.o | $(BIN_DIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(LFLAGS) $^ $(LDLIBS) -o $(BIN_DIR)/word_frequencies
 
+pegeq: $(OBJ_SRC) $(OBJ_DIR)/$(TOOLS_DIR)/pegeq.o | $(BIN_DIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(LFLAGS) $^ $(LDLIBS) -o $(BIN_DIR)/pegeq
+
 magpie_convert: $(OBJ_SRC) $(CONVERT_OBJ) | $(BIN_DIR)
 	$(CC) $(LDFLAGS) $(LFLAGS) $^ $(LDLIBS) -o $(BIN_DIR)/$@
 
@@ -430,7 +433,7 @@ $(OBJ_DIR)/$(TOOLS_DIR)/%.o: $(TOOLS_DIR)/%.c | $(OBJ_DIR) $(OBJ_DIR)/$(TOOLS_DI
 	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 # Compiler and linker flag changes in this file invalidate every object.
-$(OBJ_SRC) $(OBJ_CMD) $(OBJ_TEST) $(PGO_TRAIN_OBJ) $(CONVERT_OBJ) $(OBJ_DIR)/$(TOOLS_DIR)/word_frequencies.o: Makefile
+$(OBJ_SRC) $(OBJ_CMD) $(OBJ_TEST) $(PGO_TRAIN_OBJ) $(CONVERT_OBJ) $(OBJ_DIR)/$(TOOLS_DIR)/word_frequencies.o $(OBJ_DIR)/$(TOOLS_DIR)/pegeq.o: Makefile
 
 # A newly merged profile must rebuild every profile-use object. Without this
 # dependency, make would reuse objects optimized against an older corpus.
