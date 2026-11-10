@@ -70,6 +70,8 @@ typedef struct {
   const char *cgp;
   const char *forced;      // comma-separated UCGI moves, used when legal
   int keep[2], empty[2];   // per player (0 = root mover, 1 = opponent)
+  int deep_keep, deep_empty; // widths after each side's first decision
+  bool center_opp;          // level-k closure around the opponent's rack
   bool allow_pass;
   int level;               // 0 = all deals
   int maxturns;            // pre-endgame turns before a greedy playout leaf
@@ -246,9 +248,14 @@ static void pair_cb(const Counts *sub, void *ud) {
 
 static void collect_cb(const Counts *sub, void *ud) { rackset_add(ud, sub); }
 
-static void build_deals(const Counts *r0, int rack_n_m, int rack_n_o) {
+static void build_deals(const Counts *r0, const Counts *o0, int rack_n_m,
+                        int rack_n_o) {
   RackSet cur_m = {0}, cur_o = {0};
-  rackset_add(&cur_m, r0);
+  if (opt.center_opp) {
+    rackset_add(&cur_o, o0);
+  } else {
+    rackset_add(&cur_m, r0);
+  }
   if (opt.level <= 0) {
     // every deal: all mover racks, each with all opponent racks
     RackSet all_m = {0};
@@ -268,10 +275,14 @@ static void build_deals(const Counts *r0, int rack_n_m, int rack_n_o) {
     return;
   }
   RackSet seen_m = {0}, seen_o = {0};
-  rackset_add(&seen_m, r0);
+  if (opt.center_opp) {
+    rackset_add(&seen_o, o0);
+  } else {
+    rackset_add(&seen_m, r0);
+  }
   for (int lev = 1; lev <= opt.level; lev++) {
     RackSet next = {0};
-    if (lev % 2 == 1) {
+    if ((lev % 2 == 1) != opt.center_opp) {
       for (int i = 0; i < cur_m.n; i++) {
         Counts rest, t = {0};
         counts_sub(&pool, &cur_m.list[i], &rest);
@@ -507,7 +518,7 @@ static int cmp_move_eq(const void *a, const void *b) {
   return ex < ey ? 1 : (ex > ey ? -1 : 0);
 }
 
-static void get_cands(const Game *g, Cands *cs) {
+static void get_cands(const Game *g, Cands *cs, int depth) {
   cs->n = 0;
   const int p = game_get_player_on_turn_index(g);
   const int role = p == mover0 ? 0 : 1;
@@ -558,10 +569,12 @@ static void get_cands(const Game *g, Cands *cs) {
   int k_keep = 0, k_empty = 0;
   for (int i = 0; i < ns; i++) {
     const bool empties = move_get_tiles_played(sorted[i]) >= bag;
-    if (empties && k_empty < opt.empty[role]) {
+    const int max_empty = depth < 2 ? opt.empty[role] : opt.deep_empty;
+    const int max_keep = depth < 2 ? opt.keep[role] : opt.deep_keep;
+    if (empties && k_empty < max_empty) {
       cands_add(cs, g, sorted[i]);
       k_empty++;
-    } else if (!empties && k_keep < opt.keep[role]) {
+    } else if (!empties && k_keep < max_keep) {
       cands_add(cs, g, sorted[i]);
       k_keep++;
     }
@@ -646,7 +659,7 @@ static void walk(Game *g, Path *path) {
   const int p = game_get_player_on_turn_index(g);
   const int role = p == mover0 ? 0 : 1;
   Cands cs;
-  get_cands(g, &cs);
+  get_cands(g, &cs, path->depth);
   char infoset[KEYLEN * 2 + 8];
   snprintf(infoset, sizeof(infoset), "%d|%s|%s", role, path->priv[role],
            path->pub);
@@ -693,6 +706,8 @@ int main(int argc, char **argv) {
   opt.keep[0] = opt.keep[1] = 6;
   opt.empty[0] = opt.empty[1] = 6;
   opt.allow_pass = true;
+  opt.deep_keep = 2;
+  opt.deep_empty = 4;
   opt.level = 2;
   opt.maxturns = 3;
   opt.plies = 25;
@@ -711,6 +726,9 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "-mempty")) { opt.empty[0] = parse_int(v); i++; }
     else if (!strcmp(a, "-oempty")) { opt.empty[1] = parse_int(v); i++; }
     else if (!strcmp(a, "-nopass")) { opt.allow_pass = false; }
+    else if (!strcmp(a, "-center")) { opt.center_opp = !strcmp(v, "opp"); i++; }
+    else if (!strcmp(a, "-deepkeep")) { opt.deep_keep = parse_int(v); i++; }
+    else if (!strcmp(a, "-deepempty")) { opt.deep_empty = parse_int(v); i++; }
     else if (!strcmp(a, "-level")) { opt.level = parse_int(v); i++; }
     else if (!strcmp(a, "-maxturns")) { opt.maxturns = parse_int(v); i++; }
     else if (!strcmp(a, "-plies")) { opt.plies = parse_int(v); i++; }
@@ -779,7 +797,7 @@ int main(int argc, char **argv) {
   if (bag0 < 1 || bag0 > 6) {
     die("bag must hold 1-6 tiles");
   }
-  build_deals(&r0, nm, no);
+  build_deals(&r0, &o0, nm, no);
   fprintf(stderr, "%d deals\n", n_deals);
 
   for (int i = 0; i <= MAX_DEPTH + 1; i++) {
