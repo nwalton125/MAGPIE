@@ -38,7 +38,7 @@ def value_fn(name, window):
 
 def load(paths):
     hdr, infosets, leaves = {}, {}, collections.defaultdict(float)
-    approx = 0.0
+    approx = collections.defaultdict(float)  # (seq0, seq1) -> chance prob
     for path in paths:
         with open(path) as f:
             for line in f:
@@ -58,7 +58,7 @@ def load(paths):
                     p, s0, s1, v, exact = float(t[1]), t[2], t[3], int(t[4]), int(t[5])
                     leaves[(s0, s1, v)] += p
                     if not exact:
-                        approx += p
+                        approx[(s0, s1)] += p
     return hdr, infosets, leaves, approx
 
 
@@ -131,10 +131,12 @@ def main():
     A = A.tocsr()
     print(f"deals {hdr.get('deals')}  mover infosets {len(ix)}  opp infosets "
           f"{len(iy)}  sequences {len(sx)}/{len(sy)}  leaves {len(leaves)}")
-    if approx > 0:
-        print(f"probability mass at greedy-playout (inexact) leaves: {approx:.4f}")
     v1, x = solve_side(A, E, e, F, f)
     v2, y = solve_side(-A.T, F, f, E, e)
+    if approx:
+        m = sum(p * x[sx[s0]] * y[sy[s1]] for (s0, s1), p in approx.items())
+        print(f"probability of reaching a greedy-playout (inexact) leaf "
+              f"under the equilibrium: {m:.4f}")
     print(f"game value for root mover ({args.value}): {v1:.6f}   "
           f"(check from opponent's LP: {-v2:.6f})")
     bx, by = behaviour(infosets, sx, x, 0), behaviour(infosets, sy, y, 1)
